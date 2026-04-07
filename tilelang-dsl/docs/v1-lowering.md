@@ -17,6 +17,10 @@ It does not define:
 - raw pointer authoring surface
 - advanced vector-family lowering beyond the fixed v1 matrix
 
+For migration from that original v1 lowering boundary to the current matcher
+and advanced-surface implementation, see
+`tilelang-dsl/docs/matcher-and-advanced-surface-migration.md`.
+
 ## Source Of Truth
 
 The implemented lowering surface lives under:
@@ -88,9 +92,10 @@ PYTHONPATH=$PWD/tilelang-dsl/python \
   python3 tilelang-dsl/examples/v1_verify_smoke.py
 ```
 
-## Deferred Features
+## Historical Deferred Features
 
-The following remain outside v1 and belong to follow-up changes:
+The following remained outside the original v1 lowering boundary and were
+assigned to follow-up changes:
 - implicit vecscope inference
 - matcher registry and deterministic selection
 - raw pointer / low-level DMA / `copy_ubuf_to_ubuf` authoring surface
@@ -100,6 +105,12 @@ The following remain outside v1 and belong to follow-up changes:
 
 Primary follow-up change:
 - `extend-tilelang-dsl-matcher-and-advanced-surface`
+
+In the current package head, that follow-up has implemented matcher dispatch,
+implicit vecscope inference, raw pointer / low-level DMA authoring, and
+compare/select + predicate movement + carry + rearrangement families.
+Reduction remains deferred because the repo still does not expose a public
+authoring-form VPTO reduction op for TileLang DSL to target directly.
 
 ## Minimal Validation
 

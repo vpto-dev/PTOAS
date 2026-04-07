@@ -5,6 +5,10 @@ Current docs:
   `add-tilelang-dsl-core-foundation`
 - `v1-lowering.md`: the TileLang DSL v1 authoring-form VPTO lowering contract
   implemented by `add-tilelang-dsl-authoring-vpto-lowering`
+- `matcher-and-advanced-surface-migration.md`: migration notes from the
+  original v1 core/lowering boundary to the matcher and advanced-surface
+  capability implemented by
+  `extend-tilelang-dsl-matcher-and-advanced-surface`
 
 Documentation boundary:
 - `tilelang-dsl/docs/` is the local documentation source of truth for the new

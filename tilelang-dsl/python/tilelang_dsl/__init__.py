@@ -2,9 +2,11 @@
 
 from .kernel import (
     BoundKernelParameter,
+    KernelRegistry,
     MaterializedMLIRModule,
     TileLangFrontendError,
     VKernelDescriptor,
+    select_kernel,
     vkernel,
 )
 from .types import (
@@ -18,6 +20,7 @@ from .types import (
     MemorySpace,
     MaskPattern,
     PAT,
+    PointerType,
     Pipe,
     ScalarType,
     TensorView,
@@ -36,13 +39,16 @@ from .types import (
     i16,
     i32,
     i64,
+    ptr,
 )
 
 __all__ = [
     "BoundKernelParameter",
+    "KernelRegistry",
     "MaterializedMLIRModule",
     "TileLangFrontendError",
     "VKernelDescriptor",
+    "select_kernel",
     "vkernel",
     "ScalarType",
     "WildcardType",
@@ -50,6 +56,8 @@ __all__ = [
     "TypeVar",
     "TensorView",
     "Tile",
+    "PointerType",
+    "ptr",
     "MemorySpace",
     "Pipe",
     "Event",

@@ -22,6 +22,9 @@ It does not define:
 
 For implemented lowering details, examples, and `verify()` behavior, see
 `tilelang-dsl/docs/v1-lowering.md`.
+For migration from the original v1 core boundary to the current matcher and
+advanced-surface package capabilities, see
+`tilelang-dsl/docs/matcher-and-advanced-surface-migration.md`.
 
 ## Source Of Truth
 
@@ -218,10 +221,10 @@ Expected output shape:
 This confirms diagnostics are emitted against the authored DSL source file
 rather than an internal lowering location.
 
-## Deferred Features
+## Historical Deferred Features
 
-The following are intentionally out of scope for v1 and belong to follow-up
-changes:
+The following were intentionally out of scope for the original v1 core boundary
+and were assigned to follow-up changes:
 - multiple `dtypes` signatures
 - `constraints`
 - `priority`
@@ -234,3 +237,7 @@ changes:
 
 Matcher-related extensions are deferred to
 `extend-tilelang-dsl-matcher-and-advanced-surface`.
+That follow-up capability is now implemented in the current package head; use
+`tilelang-dsl/docs/matcher-and-advanced-surface-migration.md` for the updated
+surface boundary instead of reading the list above as a statement about current
+head behavior.

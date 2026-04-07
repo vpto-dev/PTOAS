@@ -43,11 +43,8 @@ SUPPORTED_VECSCOPE_PTO_CALLS = frozenset(
     }
 )
 
-DEFERRED_PTO_SURFACES = frozenset(
+ADVANCED_VECSCOPE_PTO_CALLS = frozenset(
     {
-        "castptr",
-        "addptr",
-        "copy_ubuf_to_ubuf",
         "vcmp",
         "vcmps",
         "vsel",
@@ -65,6 +62,33 @@ DEFERRED_PTO_SURFACES = frozenset(
         "vdintlv",
         "vintlvv2",
         "vdintlvv2",
+    }
+)
+
+ADVANCED_EXPR_PTO_CALLS = frozenset(
+    {
+        "ptr",
+        "castptr",
+        "addptr",
+    }
+)
+
+ADVANCED_TOPLEVEL_PTO_CALLS = frozenset(
+    {
+        "copy_gm_to_ubuf",
+        "copy_ubuf_to_gm",
+        "copy_ubuf_to_ubuf",
+        "set_loop2_stride_outtoub",
+        "set_loop1_stride_outtoub",
+        "set_loop_size_outtoub",
+        "set_loop2_stride_ubtoout",
+        "set_loop1_stride_ubtoout",
+        "set_loop_size_ubtoout",
+    }
+)
+
+DEFERRED_PTO_SURFACES = frozenset(
+    {
         "vreduce",
     }
 )
@@ -81,11 +105,19 @@ def deferred_surface_message(name: str) -> str:
     return unsupported_feature_message(f"advanced family surface `pto.{name}`")
 
 
+def advanced_mode_message(name: str) -> str:
+    return f"surface `pto.{name}` requires advanced=True in TileLang DSL"
+
+
 __all__ = [
     "DEFERRED_PTO_SURFACES",
     "FOLLOW_UP_CHANGE",
+    "ADVANCED_EXPR_PTO_CALLS",
+    "ADVANCED_TOPLEVEL_PTO_CALLS",
+    "ADVANCED_VECSCOPE_PTO_CALLS",
     "SUPPORTED_TOPLEVEL_PTO_CALLS",
     "SUPPORTED_VECSCOPE_PTO_CALLS",
+    "advanced_mode_message",
     "deferred_surface_message",
     "unsupported_feature_message",
 ]

@@ -11,6 +11,7 @@ from .semantic import (
     SemanticBinaryExpr,
     SemanticBindingRef,
     SemanticCallExpr,
+    SemanticDmaConfigStmt,
     SemanticDmaLoadStmt,
     SemanticDmaStoreStmt,
     SemanticExpr,
@@ -21,10 +22,11 @@ from .semantic import (
     SemanticIfResult,
     SemanticKernel,
     SemanticLiteralExpr,
+    SemanticLowLevelCopyStmt,
     SemanticMaskType,
     SemanticMetaType,
-    SemanticBindingRef,
     SemanticPipeBarrierStmt,
+    SemanticPtrType,
     SemanticReturnStmt,
     SemanticScalarType,
     SemanticSetFlagStmt,
@@ -159,6 +161,10 @@ class _AuthoringRenderer:
             ]
         if isinstance(stmt, SemanticPipeBarrierStmt):
             return [self._indent(indent) + f"pto.barrier #pto.pipe<{stmt.pipe}>"]
+        if isinstance(stmt, SemanticDmaConfigStmt):
+            return self._render_dma_config(stmt, env, indent=indent)
+        if isinstance(stmt, SemanticLowLevelCopyStmt):
+            return self._render_low_level_copy(stmt, env, indent=indent)
         if isinstance(stmt, SemanticReturnStmt):
             if stmt.value is None:
                 return [self._indent(indent) + "return"]
@@ -173,6 +179,53 @@ class _AuthoringRenderer:
         if isinstance(stmt, SemanticIfStmt):
             return self._render_if(stmt, env, indent=indent)
         raise ValueError(f"unsupported semantic statement {type(stmt).__name__}")
+
+    def _render_dma_config(
+        self,
+        stmt: SemanticDmaConfigStmt,
+        env: dict[str, _RenderedValue],
+        *,
+        indent: int,
+    ) -> list[str]:
+        lines: list[str] = []
+        first = self._lower_to_i64(stmt.first, env, indent=indent, into=lines)
+        second = self._lower_to_i64(stmt.second, env, indent=indent, into=lines)
+        lines.append(
+            self._indent(indent)
+            + f"pto.{stmt.name} {first.name}, {second.name} : i64, i64"
+        )
+        return lines
+
+    def _render_low_level_copy(
+        self,
+        stmt: SemanticLowLevelCopyStmt,
+        env: dict[str, _RenderedValue],
+        *,
+        indent: int,
+    ) -> list[str]:
+        lines: list[str] = []
+        source = self._lower_expr(stmt.source, env, indent=indent, into=lines)
+        destination = self._lower_expr(stmt.destination, env, indent=indent, into=lines)
+
+        rendered_operands = []
+        rendered_types = []
+        for index, operand in enumerate(stmt.operands):
+            if stmt.name == "copy_gm_to_ubuf" and index == 5:
+                lowered = self._lower_to_i1(operand, env, indent=indent, into=lines)
+            else:
+                lowered = self._lower_to_i64(operand, env, indent=indent, into=lines)
+            rendered_operands.append(lowered.name)
+            rendered_types.append(self._render_type(lowered.type))
+
+        operand_text = ", ".join([source.name, destination.name, *rendered_operands])
+        type_text = ", ".join(
+            [self._render_type(source.type), self._render_type(destination.type), *rendered_types]
+        )
+        lines.append(
+            self._indent(indent)
+            + f"pto.{stmt.name} {operand_text} : {type_text}"
+        )
+        return lines
 
     def _render_assign(
         self,
@@ -233,32 +286,91 @@ class _AuthoringRenderer:
     ) -> list[str]:
         if not isinstance(stmt.value, SemanticCallExpr):
             raise NotImplementedError("multi-result assignment expects a call expression in TileLang DSL v1")
-        if stmt.value.namespace != "pto" or stmt.value.name != "make_mask":
+        if stmt.value.namespace != "pto":
             raise NotImplementedError(
                 f"multi-result assignment for `pto.{stmt.value.name}` is not supported in TileLang DSL v1"
             )
         if len(stmt.targets) != 2:
-            raise NotImplementedError("tail make_mask lowering expects exactly two assignment targets")
+            raise NotImplementedError("multi-result lowering expects exactly two assignment targets")
         if not isinstance(stmt.value.type, SemanticTupleType) or len(stmt.value.type.elements) != 2:
-            raise NotImplementedError("tail make_mask lowering expects a two-result tuple type")
+            raise NotImplementedError("multi-result lowering expects a two-result tuple type")
 
-        dtype_expr, remaining_expr = stmt.value.args
-        if not self._is_dtype_meta_expr(dtype_expr):
-            raise NotImplementedError("make_mask dtype lowering expects a dtype symbol")
+        if stmt.value.name == "make_mask":
+            dtype_expr, remaining_expr = stmt.value.args
+            if not self._is_dtype_meta_expr(dtype_expr):
+                raise NotImplementedError("make_mask dtype lowering expects a dtype symbol")
 
-        lines: list[str] = []
-        remaining = self._lower_remaining_to_i32(remaining_expr, env, indent=indent, into=lines)
-        mask_target, remaining_target = stmt.targets
-        mask_type, remaining_type = stmt.value.type.elements
-        suffix = self._mask_suffix(mask_type)
-        lines.append(
-            self._indent(indent)
-            + f"{mask_target.ssa_name}, {remaining_target.ssa_name} = pto.plt_{suffix} {remaining.name} : "
-            + f"i32 -> {self._render_type(mask_type)}, {self._render_type(remaining_type)}"
+            lines: list[str] = []
+            remaining = self._lower_remaining_to_i32(remaining_expr, env, indent=indent, into=lines)
+            mask_target, remaining_target = stmt.targets
+            mask_type, remaining_type = stmt.value.type.elements
+            suffix = self._mask_suffix(mask_type)
+            lines.append(
+                self._indent(indent)
+                + f"{mask_target.ssa_name}, {remaining_target.ssa_name} = pto.plt_{suffix} {remaining.name} : "
+                + f"i32 -> {self._render_type(mask_type)}, {self._render_type(remaining_type)}"
+            )
+            env[mask_target.name] = _RenderedValue(name=mask_target.ssa_name, type=mask_type)
+            env[remaining_target.name] = _RenderedValue(name=remaining_target.ssa_name, type=remaining_type)
+            return lines
+
+        if stmt.value.name in {"vaddc", "vsubc"}:
+            lines = []
+            lhs = self._lower_expr(stmt.value.args[0], env, indent=indent, into=lines)
+            rhs = self._lower_expr(stmt.value.args[1], env, indent=indent, into=lines)
+            mask = self._lower_expr(stmt.value.args[2], env, indent=indent, into=lines)
+            result_target, carry_target = stmt.targets
+            result_type, carry_type = stmt.value.type.elements
+            lines.append(
+                self._indent(indent)
+                + f"{result_target.ssa_name}, {carry_target.ssa_name} = pto.{stmt.value.name} "
+                + f"{lhs.name}, {rhs.name}, {mask.name} : "
+                + f"{self._render_type(lhs.type)}, {self._render_type(rhs.type)}, {self._render_type(mask.type)} "
+                + f"-> {self._render_type(result_type)}, {self._render_type(carry_type)}"
+            )
+            env[result_target.name] = _RenderedValue(name=result_target.ssa_name, type=result_type)
+            env[carry_target.name] = _RenderedValue(name=carry_target.ssa_name, type=carry_type)
+            return lines
+
+        if stmt.value.name in {"vaddcs", "vsubcs"}:
+            lines = []
+            lhs = self._lower_expr(stmt.value.args[0], env, indent=indent, into=lines)
+            rhs = self._lower_expr(stmt.value.args[1], env, indent=indent, into=lines)
+            carry_in = self._lower_expr(stmt.value.args[2], env, indent=indent, into=lines)
+            mask = self._lower_expr(stmt.value.args[3], env, indent=indent, into=lines)
+            result_target, carry_target = stmt.targets
+            result_type, carry_type = stmt.value.type.elements
+            lines.append(
+                self._indent(indent)
+                + f"{result_target.ssa_name}, {carry_target.ssa_name} = pto.{stmt.value.name} "
+                + f"{lhs.name}, {rhs.name}, {carry_in.name}, {mask.name} : "
+                + f"{self._render_type(lhs.type)}, {self._render_type(rhs.type)}, "
+                + f"{self._render_type(carry_in.type)}, {self._render_type(mask.type)} "
+                + f"-> {self._render_type(result_type)}, {self._render_type(carry_type)}"
+            )
+            env[result_target.name] = _RenderedValue(name=result_target.ssa_name, type=result_type)
+            env[carry_target.name] = _RenderedValue(name=carry_target.ssa_name, type=carry_type)
+            return lines
+
+        if stmt.value.name in {"vintlv", "vdintlv"}:
+            lines = []
+            lhs = self._lower_expr(stmt.value.args[0], env, indent=indent, into=lines)
+            rhs = self._lower_expr(stmt.value.args[1], env, indent=indent, into=lines)
+            low_target, high_target = stmt.targets
+            low_type, high_type = stmt.value.type.elements
+            lines.append(
+                self._indent(indent)
+                + f"{low_target.ssa_name}, {high_target.ssa_name} = pto.{stmt.value.name} "
+                + f"{lhs.name}, {rhs.name} : {self._render_type(lhs.type)}, {self._render_type(rhs.type)} "
+                + f"-> {self._render_type(low_type)}, {self._render_type(high_type)}"
+            )
+            env[low_target.name] = _RenderedValue(name=low_target.ssa_name, type=low_type)
+            env[high_target.name] = _RenderedValue(name=high_target.ssa_name, type=high_type)
+            return lines
+
+        raise NotImplementedError(
+            f"multi-result assignment for `pto.{stmt.value.name}` is not supported in TileLang DSL v1"
         )
-        env[mask_target.name] = _RenderedValue(name=mask_target.ssa_name, type=mask_type)
-        env[remaining_target.name] = _RenderedValue(name=remaining_target.ssa_name, type=remaining_type)
-        return lines
 
     def _render_dma_load(
         self,
@@ -655,6 +767,118 @@ class _AuthoringRenderer:
             )
             return _RenderedValue(name=result_name, type=expr.type)
 
+        if expr.name == "castptr":
+            value = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+            if isinstance(expr.type, SemanticPtrType) and isinstance(value.type, SemanticIndexType):
+                value = self._coerce_rendered_to_i64(value, indent=indent, into=into)
+            into.append(
+                self._indent(indent)
+                + f"{result_name} = pto.castptr {value.name} : "
+                + f"{self._render_type(value.type)} -> {self._render_type(expr.type)}"
+            )
+            return _RenderedValue(name=result_name, type=expr.type)
+
+        if expr.name == "addptr":
+            pointer = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+            offset = self._lower_expr(expr.args[1], env, indent=indent, into=into)
+            into.append(
+                self._indent(indent)
+                + f"{result_name} = pto.addptr {pointer.name}, {offset.name} : "
+                + f"{self._render_type(pointer.type)} -> {self._render_type(expr.type)}"
+            )
+            return _RenderedValue(name=result_name, type=expr.type)
+
+        if expr.name in {"ppack", "punpack"}:
+            value = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+            part = self._render_string_literal(expr.args[1])
+            into.append(
+                self._indent(indent)
+                + f"{result_name} = pto.{expr.name} {value.name}, {part} : "
+                + f"{self._render_type(value.type)} -> {self._render_type(expr.type)}"
+            )
+            return _RenderedValue(name=result_name, type=expr.type)
+
+        if expr.name == "pnot":
+            value = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+            mask = self._lower_expr(expr.args[1], env, indent=indent, into=into)
+            into.append(
+                self._indent(indent)
+                + f"{result_name} = pto.pnot {value.name}, {mask.name} : "
+                + f"{self._render_type(value.type)}, {self._render_type(mask.type)} -> {self._render_type(expr.type)}"
+            )
+            return _RenderedValue(name=result_name, type=expr.type)
+
+        if expr.name == "psel":
+            src0 = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+            src1 = self._lower_expr(expr.args[1], env, indent=indent, into=into)
+            mask = self._lower_expr(expr.args[2], env, indent=indent, into=into)
+            into.append(
+                self._indent(indent)
+                + f"{result_name} = pto.psel {src0.name}, {src1.name}, {mask.name} : "
+                + f"{self._render_type(src0.type)}, {self._render_type(src1.type)}, {self._render_type(mask.type)} "
+                + f"-> {self._render_type(expr.type)}"
+            )
+            return _RenderedValue(name=result_name, type=expr.type)
+
+        if expr.name == "vcmp":
+            lhs = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+            rhs = self._lower_expr(expr.args[1], env, indent=indent, into=into)
+            seed = self._lower_expr(expr.args[2], env, indent=indent, into=into)
+            cmp_mode = self._render_string_literal(expr.args[3])
+            into.append(
+                self._indent(indent)
+                + f"{result_name} = pto.vcmp {lhs.name}, {rhs.name}, {seed.name}, {cmp_mode} : "
+                + f"{self._render_type(lhs.type)}, {self._render_type(rhs.type)}, {self._render_type(seed.type)} "
+                + f"-> {self._render_type(expr.type)}"
+            )
+            return _RenderedValue(name=result_name, type=expr.type)
+
+        if expr.name == "vcmps":
+            vector = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+            scalar = self._lower_expr(expr.args[1], env, indent=indent, into=into)
+            seed = self._lower_expr(expr.args[2], env, indent=indent, into=into)
+            cmp_mode = self._render_string_literal(expr.args[3])
+            into.append(
+                self._indent(indent)
+                + f"{result_name} = pto.vcmps {vector.name}, {scalar.name}, {seed.name}, {cmp_mode} : "
+                + f"{self._render_type(vector.type)}, {self._render_type(scalar.type)}, {self._render_type(seed.type)} "
+                + f"-> {self._render_type(expr.type)}"
+            )
+            return _RenderedValue(name=result_name, type=expr.type)
+
+        if expr.name == "vsel":
+            src0 = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+            src1 = self._lower_expr(expr.args[1], env, indent=indent, into=into)
+            mask = self._lower_expr(expr.args[2], env, indent=indent, into=into)
+            into.append(
+                self._indent(indent)
+                + f"{result_name} = pto.vsel {src0.name}, {src1.name}, {mask.name} : "
+                + f"{self._render_type(src0.type)}, {self._render_type(src1.type)}, {self._render_type(mask.type)} "
+                + f"-> {self._render_type(expr.type)}"
+            )
+            return _RenderedValue(name=result_name, type=expr.type)
+
+        if expr.name in {"vselr", "vselrv2"}:
+            src0 = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+            src1 = self._lower_expr(expr.args[1], env, indent=indent, into=into)
+            into.append(
+                self._indent(indent)
+                + f"{result_name} = pto.{expr.name} {src0.name}, {src1.name} : "
+                + f"{self._render_type(src0.type)}, {self._render_type(src1.type)} -> {self._render_type(expr.type)}"
+            )
+            return _RenderedValue(name=result_name, type=expr.type)
+
+        if expr.name in {"vintlvv2", "vdintlvv2"}:
+            lhs = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+            rhs = self._lower_expr(expr.args[1], env, indent=indent, into=into)
+            part = self._render_string_literal(expr.args[2])
+            into.append(
+                self._indent(indent)
+                + f"{result_name} = pto.{expr.name} {lhs.name}, {rhs.name}, {part} : "
+                + f"{self._render_type(lhs.type)}, {self._render_type(rhs.type)} -> {self._render_type(expr.type)}"
+            )
+            return _RenderedValue(name=result_name, type=expr.type)
+
         if expr.name in {"vabs", "vrelu", "vexp", "vnot"}:
             value = self._lower_expr(expr.args[0], env, indent=indent, into=into)
             mask = self._lower_expr(expr.args[1], env, indent=indent, into=into)
@@ -690,6 +914,57 @@ class _AuthoringRenderer:
             return _RenderedValue(name=result_name, type=expr.type)
 
         raise NotImplementedError(f"unsupported pto call `{expr.name}` in lowering")
+
+    def _render_string_literal(self, expr: SemanticExpr) -> str:
+        if isinstance(expr, SemanticLiteralExpr) and isinstance(expr.value, str):
+            escaped = expr.value.replace("\\", "\\\\").replace('"', '\\"')
+            return f'"{escaped}"'
+        if isinstance(expr, SemanticBindingRef) and isinstance(expr.binding.value, str):
+            escaped = expr.binding.value.replace("\\", "\\\\").replace('"', '\\"')
+            return f'"{escaped}"'
+        raise NotImplementedError("expected a string literal for TileLang DSL advanced-family lowering")
+
+    def _lower_to_i1(
+        self,
+        expr: SemanticExpr,
+        env: dict[str, _RenderedValue],
+        *,
+        indent: int,
+        into: list[str],
+    ) -> _RenderedValue:
+        value = self._lower_expr(expr, env, indent=indent, into=into)
+        if isinstance(value.type, SemanticScalarType) and value.type.dtype.name == "i1":
+            return value
+        raise NotImplementedError("expected an i1 operand during TileLang DSL v1 lowering")
+
+    def _lower_to_i64(
+        self,
+        expr: SemanticExpr,
+        env: dict[str, _RenderedValue],
+        *,
+        indent: int,
+        into: list[str],
+    ) -> _RenderedValue:
+        value = self._lower_expr(expr, env, indent=indent, into=into)
+        return self._coerce_rendered_to_i64(value, indent=indent, into=into)
+
+    def _coerce_rendered_to_i64(
+        self,
+        value: _RenderedValue,
+        *,
+        indent: int,
+        into: list[str],
+    ) -> _RenderedValue:
+        if isinstance(value.type, SemanticScalarType) and value.type.dtype.name == "i64":
+            return value
+        if isinstance(value.type, SemanticIndexType):
+            cast_name = self._new_temp()
+            into.append(
+                self._indent(indent)
+                + f"{cast_name} = arith.index_castui {value.name} : index to i64"
+            )
+            return _RenderedValue(name=cast_name, type=_I64_TYPE)
+        raise NotImplementedError("expected an i64 or index operand during TileLang DSL v1 lowering")
 
     def _lower_remaining_to_i32(
         self,
@@ -847,6 +1122,8 @@ class _AuthoringRenderer:
             return "index"
         if isinstance(ty, SemanticScalarType):
             return ty.dtype.name
+        if isinstance(ty, SemanticPtrType):
+            return f"!pto.ptr<{ty.element_dtype.name}, {ty.memory_space}>"
         if isinstance(ty, SemanticTensorViewType):
             return f"!pto.ptr<{ty.element_dtype.name}, gm>"
         if isinstance(ty, SemanticTileType):
