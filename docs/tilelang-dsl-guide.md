@@ -4,6 +4,33 @@ The TileLang Python DSL provides a high-level, Pythonic interface for authoring 
 
 The DSL is designed to generate MLIR function libraries rather than direct binary executables. These MLIR libraries are intended to be consumed by other compilation frameworks that transform high-level tile semantics into low-level vector operations. This enables library developers to focus on hardware-aware kernel authoring while relying on upstream compilers for tile-level optimizations and code generation.
 
+## Current Implementation Status
+
+The current `tilelang_dsl` package in this repository implements:
+- matcher support:
+  `KernelRegistry`, `pto.select_kernel(...)`, multi-signature `dtypes`,
+  `AnyFloat` / `AnyInt` / `AnyType` / `AnyMask`, `TypeVar`, `constraints`,
+  `priority`
+- advanced authoring support:
+  implicit vecscope inference in `advanced=True` kernels
+- raw pointer / low-level DMA support:
+  `ptr(...)`, `castptr`, `addptr`, low-level DMA config ops,
+  `copy_gm_to_ubuf`, `copy_ubuf_to_gm`, `copy_ubuf_to_ubuf`
+- advanced vector-family lowering:
+  compare/select, predicate movement, carry, rearrangement
+
+Still deferred in the current package head:
+- reduction-family authoring
+
+Reason:
+- the repo does not yet expose a public authoring-form VPTO reduction op that
+  the standalone TileLang DSL can target directly
+
+For the package-local source of truth, see:
+- `tilelang-dsl/docs/v1-surface.md`
+- `tilelang-dsl/docs/v1-lowering.md`
+- `tilelang-dsl/docs/matcher-and-advanced-surface-migration.md`
+
 ## Quick Start
 
 **Note on mask pattern enums**: For brevity, examples in this guide use `PAT` as an alias for `pto.MaskPattern` (e.g., `PAT.ALL` instead of `pto.MaskPattern.PAT_ALL`). You can create this alias with `from pto import MaskPattern as PAT` or `PAT = pto.MaskPattern`.
@@ -223,6 +250,21 @@ When a PTO operation needs implementation, the system performs the following mat
 4. **Constraint Validation**: For each matching kernel, evaluate all `constraints`. If any constraint fails, the kernel is rejected.
 5. **Priority Selection**: From the remaining kernels, select the one with the highest `priority` value.
 6. **Fallback**: If no kernel matches, compilation fails with an error.
+
+The package also exposes explicit selection utilities:
+
+```python
+registry = pto.KernelRegistry()
+registry.register(my_kernel)
+
+selected = pto.select_kernel(
+    "a5",
+    "matmul",
+    (pto.f16, pto.f16, pto.f32),
+    context_attrs={"k_aligned": True},
+    registry=registry,
+)
+```
 
 #### Examples
 
@@ -1869,63 +1911,66 @@ mask1, updated = pto.make_mask(pto.f32, remaining)     # tail processing
 mask2 = pto.make_mask(pto.f32, PAT.ALL)              # pattern mode
 ```
 
-#### `pto.ppack(mask: MaskType) -> pto.i32`
+#### `pto.ppack(mask: MaskType, part: str) -> MaskType`
 
-**Description**: Packs mask bits into a 32-bit integer.
+**Description**: Rearranges a mask according to the requested `part` selector.
 
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `mask` | `MaskType` | Input mask (`mask_b8`, `mask_b16`, or `mask_b32`) |
+| `part` | `str` | Part selector such as `"PART_EVEN"` or `"PART_ODD"` |
 
 **Returns**:
 | Return Value | Type | Description |
 |--------------|------|-------------|
-| `packed` | `pto.i32` | Packed mask bits |
+| `packed` | `MaskType` | Reordered mask |
 
-#### `pto.punpack(packed: pto.i32) -> MaskType`
+#### `pto.punpack(mask: MaskType, part: str) -> MaskType`
 
-**Description**: Unpacks 32-bit integer to mask (granularity determined by context).
-
-**Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `packed` | `pto.i32` | Packed mask bits |
-
-**Returns**:
-| Return Value | Type | Description |
-|--------------|------|-------------|
-| `mask` | `MaskType` | Unpacked mask |
-
-#### `pto.pnot(mask: MaskType) -> MaskType`
-
-**Description**: Logical negation of mask bits.
+**Description**: Applies the inverse mask-part rearrangement selected by `part`.
 
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `mask` | `MaskType` | Input mask |
+| `part` | `str` | Part selector such as `"PART_EVEN"` or `"PART_ODD"` |
+
+**Returns**:
+| Return Value | Type | Description |
+|--------------|------|-------------|
+| `mask` | `MaskType` | Reordered mask |
+
+#### `pto.pnot(mask: MaskType, gate: MaskType) -> MaskType`
+
+**Description**: Predicate negation under a same-granularity mask gate.
+
+**Parameters**:
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `mask` | `MaskType` | Input mask |
+| `gate` | `MaskType` | Gating mask with the same granularity |
 
 **Returns**:
 | Return Value | Type | Description |
 |--------------|------|-------------|
 | `negated` | `MaskType` | Negated mask |
 
-#### `pto.psel(mask: MaskType, true_val: ScalarType, false_val: ScalarType) -> ScalarType`
+#### `pto.psel(src0: MaskType, src1: MaskType, mask: MaskType) -> MaskType`
 
-**Description**: Selects between two scalar values based on mask.
+**Description**: Selects between two masks using a third mask as selector.
 
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
+| `src0` | `MaskType` | First input mask |
+| `src1` | `MaskType` | Second input mask |
 | `mask` | `MaskType` | Selection mask |
-| `true_val` | `ScalarType` | Value selected when mask bit is 1 |
-| `false_val` | `ScalarType` | Value selected when mask bit is 0 |
 
 **Returns**:
 | Return Value | Type | Description |
 |--------------|------|-------------|
-| `result` | `ScalarType` | Selected scalar value |
+| `result` | `MaskType` | Selected mask |
 
 ### Unary Vector Operations
 
@@ -2369,52 +2414,58 @@ scaled = pto.vmuls(vec_f32, pto.f32(2.0), mask32)
 
 Operations with carry propagation and selection.
 
-#### `pto.vaddc(vec1: VRegType, vec2: VRegType, carry_in: ScalarType, mask: MaskType) -> (VRegType, ScalarType)`
+Implemented current-package carry/select surface also includes:
+- `pto.vcmp(vec0, vec1, seed_mask, cmp_mode) -> MaskType`
+- `pto.vcmps(vec, scalar, seed_mask, cmp_mode) -> MaskType`
+- `pto.vselr(vec0, vec1) -> VRegType`
+- `pto.vselrv2(vec0, vec1) -> VRegType`
+- `pto.vaddcs(vec0, vec1, carry_in, mask) -> (VRegType, MaskType)`
+- `pto.vsubcs(vec0, vec1, carry_in, mask) -> (VRegType, MaskType)`
 
-**Description**: Vector addition with carry input and output.
+#### `pto.vaddc(vec1: VRegType, vec2: VRegType, mask: MaskType) -> (VRegType, MaskType)`
+
+**Description**: Vector addition with carry output.
 
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `vec1` | `VRegType` | First input vector |
 | `vec2` | `VRegType` | Second input vector |
-| `carry_in` | `ScalarType` | Input carry bit |
 | `mask` | `MaskType` | Predicate mask |
 
 **Returns**:
 | Return Value | Type | Description |
 |--------------|------|-------------|
 | `result` | `VRegType` | Sum vector |
-| `carry_out` | `ScalarType` | Output carry bit |
+| `carry_out` | `MaskType` | Output carry mask |
 
-#### `pto.vsubc(vec1: VRegType, vec2: VRegType, borrow_in: ScalarType, mask: MaskType) -> (VRegType, ScalarType)`
+#### `pto.vsubc(vec1: VRegType, vec2: VRegType, mask: MaskType) -> (VRegType, MaskType)`
 
-**Description**: Vector subtraction with borrow input and output.
+**Description**: Vector subtraction with borrow output.
 
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `vec1` | `VRegType` | First input vector |
 | `vec2` | `VRegType` | Second input vector |
-| `borrow_in` | `ScalarType` | Input borrow bit |
 | `mask` | `MaskType` | Predicate mask |
 
 **Returns**:
 | Return Value | Type | Description |
 |--------------|------|-------------|
 | `result` | `VRegType` | Difference vector |
-| `borrow_out` | `ScalarType` | Output borrow bit |
+| `borrow_out` | `MaskType` | Output borrow mask |
 
-#### `pto.vsel(mask: MaskType, true_vec: VRegType, false_vec: VRegType) -> VRegType`
+#### `pto.vsel(true_vec: VRegType, false_vec: VRegType, mask: MaskType) -> VRegType`
 
 **Description**: Vector select based on mask.
 
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `mask` | `MaskType` | Selection mask |
 | `true_vec` | `VRegType` | Vector selected when mask bit is 1 |
 | `false_vec` | `VRegType` | Vector selected when mask bit is 0 |
+| `mask` | `MaskType` | Selection mask |
 
 **Returns**:
 | Return Value | Type | Description |
@@ -2423,7 +2474,7 @@ Operations with carry propagation and selection.
 
 **Example**:
 ```python
-result = pto.vsel(mask32, scaled_vec, original_vec)
+result = pto.vsel(scaled_vec, original_vec, mask32)
 ```
 
 ### Data Rearrangement
@@ -2458,31 +2509,35 @@ Operations for rearranging data within vectors.
 |--------------|------|-------------|
 | `result` | `pto.mask_b16` | Interleaved mask |
 
-#### `pto.vintlv(vec1: VRegType, vec2: VRegType, mask: MaskType) -> VRegType`
+Implemented current-package rearrangement surface also includes:
+- `pto.vintlvv2(vec0, vec1, part) -> VRegType`
+- `pto.vdintlvv2(vec0, vec1, part) -> VRegType`
 
-**Description**: Interleave two vectors.
+#### `pto.vintlv(vec1: VRegType, vec2: VRegType) -> (VRegType, VRegType)`
+
+**Description**: Interleave two vectors and return the low/high results.
 
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `vec1` | `VRegType` | First input vector |
 | `vec2` | `VRegType` | Second input vector |
-| `mask` | `MaskType` | Predicate mask |
 
 **Returns**:
 | Return Value | Type | Description |
 |--------------|------|-------------|
-| `result` | `VRegType` | Interleaved vector |
+| `low` | `VRegType` | Low interleaved result |
+| `high` | `VRegType` | High interleaved result |
 
-#### `pto.vdintlv(vec: VRegType, mask: MaskType) -> (VRegType, VRegType)`
+#### `pto.vdintlv(vec0: VRegType, vec1: VRegType) -> (VRegType, VRegType)`
 
-**Description**: Deinterleave vector into two vectors.
+**Description**: Deinterleave a pair of vectors into low/high results.
 
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `vec` | `VRegType` | Input vector |
-| `mask` | `MaskType` | Predicate mask |
+| `vec0` | `VRegType` | First input vector |
+| `vec1` | `VRegType` | Second input vector |
 
 **Returns**:
 | Return Value | Type | Description |
@@ -2832,7 +2887,7 @@ def conditional_scale(src: pto.ptr(pto.f32, MemorySpace.GM),
             scaled = pto.vmuls(vec, pto.f32(2.0), mask)
 
             # Keep original values below threshold
-            result = pto.vsel(mask, scaled, vec)
+            result = pto.vsel(scaled, vec, mask)
 
             pto.vsts(result, vout, i, all_mask)
 ```
@@ -2844,11 +2899,11 @@ def conditional_scale(src: pto.ptr(pto.f32, MemorySpace.GM),
 def prefix_sum(src: pto.ptr(pto.i32, MemorySpace.UB),
                dst: pto.ptr(pto.i32, MemorySpace.UB)):
     all_mask = pto.make_mask(pto.i32, PAT.ALL)
-    carry = pto.i32(0)
+    carry = all_mask
 
     for i in range(0, 256, 64):
         vec = pto.vlds(src, i)
-        result, carry = pto.vaddcs(vec, carry, all_mask)
+        result, carry = pto.vaddcs(vec, vec, carry, all_mask)
         pto.vsts(result, dst, i, all_mask)
 ```
 
