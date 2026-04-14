@@ -2374,10 +2374,10 @@ class TileLangDSLDescriptorTests(unittest.TestCase):
     def test_extended_integer_vector_ops_surface_lowers(self) -> None:
         @pto.vkernel(
             op="extended_integer_vector_ops_unique",
-            dtypes=[(pto.i32, pto.i32, pto.i32)],
+            dtypes=[(pto.i32, pto.i32, pto.i16)],
             advanced=True,
         )
-        def kernel(dst: pto.Tile, src: pto.Tile, shift: pto.i32):
+        def kernel(dst: pto.Tile, src: pto.Tile, shift: pto.i16):
             all_mask = pto.make_mask(pto.i32, pto.PAT.ALL)
             vec0 = pto.vlds(src, 0)
             vec1 = pto.vlds(src, 64)

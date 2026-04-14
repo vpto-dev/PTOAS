@@ -759,7 +759,7 @@ scaled = pto.vmuls(vec_f32, pto.f32(2.0), mask32)
 |--------------|------|-------------|
 | `result` | `VRegType` | Leaky ReLU activated values |
 
-#### `pto.vshls(vec: VRegType, shift: ScalarType, mask: MaskType) -> VRegType`
+#### `pto.vshls(vec: VRegType, shift: i16, mask: MaskType) -> VRegType`
 
 **Description**: Vector shift left by scalar (uniform shift).
 
@@ -767,7 +767,7 @@ scaled = pto.vmuls(vec_f32, pto.f32(2.0), mask32)
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `vec` | `VRegType` | Input vector |
-| `shift` | `ScalarType` | Shift amount (same for all elements) |
+| `shift` | `i16` | Shift amount (same for all elements) |
 | `mask` | `MaskType` | Predicate mask |
 
 **Returns**:
@@ -775,7 +775,7 @@ scaled = pto.vmuls(vec_f32, pto.f32(2.0), mask32)
 |--------------|------|-------------|
 | `result` | `VRegType` | Shifted values |
 
-#### `pto.vshrs(vec: VRegType, shift: ScalarType, mask: MaskType) -> VRegType`
+#### `pto.vshrs(vec: VRegType, shift: i16, mask: MaskType) -> VRegType`
 
 **Description**: Vector shift right by scalar (uniform shift).
 
@@ -783,7 +783,7 @@ scaled = pto.vmuls(vec_f32, pto.f32(2.0), mask32)
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `vec` | `VRegType` | Input vector |
-| `shift` | `ScalarType` | Shift amount (same for all elements) |
+| `shift` | `i16` | Shift amount (same for all elements) |
 | `mask` | `MaskType` | Predicate mask |
 
 **Returns**:

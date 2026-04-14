@@ -4130,7 +4130,10 @@ class _SemanticAnalyzer:
         vector_expr, scalar_expr, mask = args
         vreg = self._require_vreg_expr(vector_expr, f"pto.{name} vector")
         scalar = self._require_scalar_expr(scalar_expr, f"pto.{name} scalar")
-        if scalar.dtype != vreg.element_dtype:
+        if name in {"vshls", "vshrs"}:
+            if scalar.dtype != i16:
+                raise TypeError(f"pto.{name} scalar dtype must be i16")
+        elif scalar.dtype != vreg.element_dtype:
             raise TypeError(f"pto.{name} scalar dtype must match vector element dtype")
         self._require_mask_for_vreg(mask, vreg, f"pto.{name}")
         self._validate_vector_scalar_dtype(name, vreg.element_dtype)
