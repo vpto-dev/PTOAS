@@ -106,7 +106,7 @@ Important semantics:
 - Helper calls support positional arguments and keyword arguments.
 - Helper calls can appear in statement and expression positions.
 - Helper definitions can use trailing `return <expr>` to return values.
-- Implicit capture is rejected; pass required values as explicit arguments.
+- Implicit capture is rejected except module-level globals whose current bound value is `bool`/`int`/`float`/`str`; pass other required values as explicit arguments.
 - Recursive/mutually-recursive helper call graphs are rejected.
 - `*args`, `**kwargs`, and keyword-only parameters are unsupported in current version.
 
