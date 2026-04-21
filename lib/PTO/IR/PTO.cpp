@@ -7057,23 +7057,11 @@ static void printBufSyncOp(OpAsmPrinter &p, Attribute opTypeAttr,
     p << " \"" << stringifyPIPE(pipeAttr.getPipe()) << "\", "
       << bufIdAttr.getInt() << ", " << modeAttr.getInt();
   } else if (auto pipeEventType = dyn_cast<PipeEventTypeAttr>(opTypeAttr)) {
-    auto pipe = mapSyncOpTypeToPipe(pipeEventType.getOpType());
-    if (isConcreteSyncPipe(pipe)) {
-      p << " \"" << stringifyPIPE(pipe) << "\", " << bufIdAttr.getInt()
-        << ", " << modeAttr.getInt();
-    } else {
-      p << "[" << opTypeAttr << ", " << bufIdAttr.getInt() << ", "
-        << modeAttr.getInt() << "]";
-    }
+    p << "[" << opTypeAttr << ", " << bufIdAttr.getInt() << ", "
+      << modeAttr.getInt() << "]";
   } else if (auto syncOpType = dyn_cast<SyncOpTypeAttr>(opTypeAttr)) {
-    auto pipe = mapSyncOpTypeToPipe(syncOpType.getOpType());
-    if (isConcreteSyncPipe(pipe)) {
-      p << " \"" << stringifyPIPE(pipe) << "\", " << bufIdAttr.getInt()
-        << ", " << modeAttr.getInt();
-    } else {
-      p << "[" << opTypeAttr << ", " << bufIdAttr.getInt() << ", "
-        << modeAttr.getInt() << "]";
-    }
+    p << "[" << opTypeAttr << ", " << bufIdAttr.getInt() << ", "
+      << modeAttr.getInt() << "]";
   } else {
     p << "[" << opTypeAttr << ", " << bufIdAttr.getInt() << ", "
       << modeAttr.getInt() << "]";

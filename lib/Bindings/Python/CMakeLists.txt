@@ -62,6 +62,10 @@ if(APPLE)
   target_link_options(_pto PRIVATE "LINKER:-undefined,dynamic_lookup")
 endif()
 
+if(NOT MLIR_PYTHON_PACKAGE_DIR)
+  message(FATAL_ERROR "MLIR_PYTHON_PACKAGE_DIR must be set when PTO_ENABLE_PYTHON_BINDING=ON")
+endif()
+
 install(TARGETS _pto
   LIBRARY DESTINATION "${MLIR_PYTHON_PACKAGE_DIR}/mlir/_mlir_libs"
 )
@@ -103,4 +107,3 @@ add_custom_command(TARGET _pto POST_BUILD
           "${CMAKE_BINARY_DIR}/python/mlir/_mlir_libs"
   VERBATIM
 )
-

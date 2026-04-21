@@ -102,6 +102,23 @@ MaskPatternAttr = _pto_mod.MaskPatternAttr
 QuantType = _pto_mod.QuantType
 QuantTypeAttr = _pto_mod.QuantTypeAttr
 
+
+_ptr_type_get_impl = PtrType.get
+
+
+def _ptr_type_get_compat(cls, element_type, memory_space=None, context=None):
+    if isinstance(memory_space, _ods_ir.Context):
+        if context is not None:
+            raise TypeError("PtrType.get got multiple context arguments")
+        context = memory_space
+        memory_space = None
+    return _ptr_type_get_impl(
+        element_type, memory_space=memory_space, context=context
+    )
+
+
+PtrType.get = classmethod(_ptr_type_get_compat)
+
 __all__ = [
     # Dialect utilities
     "register_dialect",
