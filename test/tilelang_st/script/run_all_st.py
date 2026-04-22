@@ -10,7 +10,9 @@
 """Batch runner for TileLang ST, suitable for CI/self-hosted runner usage."""
 
 import argparse
+import concurrent.futures
 import os
+import subprocess
 import sys
 import traceback
 
@@ -66,6 +68,10 @@ def parse_args():
         "--list", action="store_true",
         help="List discovered testcases and exit.",
     )
+    parser.add_argument(
+        "-j", "--jobs", type=int, default=1,
+        help="Number of testcases to run in parallel after the shared build (default: 1).",
+    )
     return parser.parse_args()
 
 
@@ -89,6 +95,28 @@ def resolve_selected_testcases(all_testcases, requested):
     return requested_set
 
 
+def run_testcase_subprocess(script_path, run_mode, soc_version, ptoas_bin, testcase):
+    command = [
+        sys.executable,
+        script_path,
+        "-r", run_mode,
+        "-v", soc_version,
+        "-t", testcase,
+        "-p", ptoas_bin,
+        "-w",
+    ]
+    env = os.environ.copy()
+    result = subprocess.run(
+        command,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+    )
+    return testcase, result.returncode, result.stdout
+
+
 def main():
     args = parse_args()
 
@@ -98,6 +126,9 @@ def main():
             f"supported: {', '.join(sorted(SOC_VERSION_MAP))}",
             file=sys.stderr,
         )
+        sys.exit(1)
+    if args.jobs < 1:
+        print("[ERROR] --jobs must be >= 1", file=sys.stderr)
         sys.exit(1)
 
     script_path = os.path.abspath(__file__)
@@ -142,6 +173,7 @@ def main():
     print(f"[INFO] ptoas={ptoas_bin}")
     print(f"[INFO] target_dir={target_dir}")
     print(f"[INFO] selected_testcases={', '.join(selected_testcases)}")
+    print(f"[INFO] jobs={args.jobs}")
 
     original_dir = os.getcwd()
     failures = []
@@ -155,18 +187,58 @@ def main():
             run_st.build_project(args.run_mode, default_soc_version, "all", ptoas_bin)
 
         total = len(selected_testcases)
-        for index, testcase in enumerate(selected_testcases, start=1):
-            print(f"[INFO] [{index}/{total}] running testcase: {testcase}")
-            try:
-                run_st.run_gen_data(testcase)
-                run_st.run_binary(testcase)
-                run_st.run_compare(testcase)
-            except Exception as exc:  # pragma: no cover - CI-side aggregation path
-                failures.append((testcase, str(exc)))
-                print(f"[ERROR] testcase failed: {testcase}")
-                traceback.print_exc()
-                if args.fail_fast:
-                    break
+        if args.jobs == 1:
+            for index, testcase in enumerate(selected_testcases, start=1):
+                print(f"[INFO] [{index}/{total}] running testcase: {testcase}")
+                try:
+                    run_st.run_gen_data(testcase)
+                    run_st.run_binary(testcase)
+                    run_st.run_compare(testcase)
+                except Exception as exc:  # pragma: no cover - CI-side aggregation path
+                    failures.append((testcase, str(exc)))
+                    print(f"[ERROR] testcase failed: {testcase}")
+                    traceback.print_exc()
+                    if args.fail_fast:
+                        break
+        else:
+            print(f"[INFO] running testcases in parallel with jobs={args.jobs}")
+            max_workers = min(args.jobs, total)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_testcase = {}
+                for index, testcase in enumerate(selected_testcases, start=1):
+                    print(f"[INFO] [{index}/{total}] queue testcase: {testcase}")
+                    future = executor.submit(
+                        run_testcase_subprocess,
+                        script_path,
+                        args.run_mode,
+                        args.soc_version,
+                        ptoas_bin,
+                        testcase,
+                    )
+                    future_to_testcase[future] = testcase
+
+                for future in concurrent.futures.as_completed(future_to_testcase):
+                    testcase = future_to_testcase[future]
+                    try:
+                        _, returncode, output = future.result()
+                    except Exception as exc:  # pragma: no cover - executor/host failure
+                        failures.append((testcase, str(exc)))
+                        print(f"[ERROR] testcase runner crashed: {testcase}")
+                        traceback.print_exc()
+                        if args.fail_fast:
+                            break
+                        continue
+
+                    print(f"[INFO] ===== testcase {testcase} output begin =====")
+                    if output:
+                        print(output, end="" if output.endswith("\n") else "\n")
+                    print(f"[INFO] ===== testcase {testcase} output end =====")
+
+                    if returncode != 0:
+                        failures.append((testcase, f"subprocess exited with {returncode}"))
+                        print(f"[ERROR] testcase failed: {testcase}")
+                        if args.fail_fast:
+                            break
 
     except Exception as exc:
         print(f"[ERROR] batch run failed: {exc}", file=sys.stderr)

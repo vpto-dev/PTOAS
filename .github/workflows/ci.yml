@@ -104,8 +104,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -286,12 +284,11 @@ jobs:
       LLVM_DIR: ${{ github.workspace }}/llvm-project/llvm/build-shared
       MLIR_PYTHONPATH: ${{ github.workspace }}/llvm-project/llvm/build-shared/tools/mlir/python_packages/mlir_core
       VPTO_SIM_WORKSPACE: ${{ github.workspace }}/.work/vpto-sim-ci
+      TILELANG_DSL_WORKSPACE: ${{ github.workspace }}/.work/tilelang-dsl-ci
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -300,7 +297,7 @@ jobs:
         run: |
           set -euo pipefail
           missing_tools=()
-          for tool in python3 git cmake ninja; do
+          for tool in python3 git cmake ninja make; do
             if ! command -v "${tool}" >/dev/null 2>&1; then
               missing_tools+=("${tool}")
             fi
@@ -309,7 +306,7 @@ jobs:
           if [[ "${#missing_tools[@]}" -gt 0 ]]; then
             if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
               sudo apt-get update
-              sudo apt-get install -y python3 python3-pip git cmake ninja-build
+              sudo apt-get install -y python3 python3-pip git cmake ninja-build make
             else
               echo "ERROR: missing required tools on self-hosted runner: ${missing_tools[*]}" >&2
               echo "ERROR: automatic installation requires sudo + apt-get" >&2
@@ -347,6 +344,14 @@ jobs:
           else
             echo "ready=false" >> "${GITHUB_OUTPUT}"
           fi
+
+      - name: Clean CI work dirs
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "${GITHUB_WORKSPACE}/build"
+          rm -rf "${VPTO_SIM_WORKSPACE}"
+          rm -rf "${TILELANG_DSL_WORKSPACE}"
 
       - name: Prepare LLVM source (no rebuild)
         if: steps.detect-llvm-build.outputs.ready != 'true'
@@ -435,6 +440,25 @@ jobs:
           DEVICE=SIM \
           JOBS="${JOBS:-32}" \
           bash test/vpto/scripts/run_host_vpto_validation_parallel.sh
+
+      - name: Run TileLang DSL CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${TILELANG_DSL_WORKSPACE}"
+          ASCEND_HOME_PATH="${ASCEND_HOME_PATH}" \
+          PTOAS_BIN="${PTOAS_BIN}" \
+          bash test/tilelang_st/script/run_ci.sh -r sim -v a5 --jobs 32 \
+            2>&1 | tee "${TILELANG_DSL_WORKSPACE}/run_ci.log"
+
+      - name: Upload TileLang DSL logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tilelang-dsl-ci-${{ github.run_id }}
+          path: |
+            ${{ env.TILELANG_DSL_WORKSPACE }}/run_ci.log
+          if-no-files-found: warn
 
       - name: Upload VPTO SIM logs
         if: always()
