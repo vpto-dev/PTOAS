@@ -176,21 +176,37 @@ def _default_concrete_dtype(pattern: object) -> pto.ScalarType:
     raise ValueError(f"unsupported dtype pattern {pattern!r}")
 
 
+def _default_parameter_dtype(
+    param_spec: object | None,
+    pattern: object,
+) -> pto.ScalarType:
+    annotation = getattr(param_spec, "annotation", None)
+    if isinstance(annotation, pto.ScalarType):
+        return annotation
+    if isinstance(annotation, pto.WildcardType) and annotation.name != "AnyType":
+        return _default_concrete_dtype(annotation)
+    if isinstance(annotation, pto.MaskType):
+        return pto.i1
+    return _default_concrete_dtype(pattern)
+
+
 def _default_operand_types(descriptor: pto.VKernelDescriptor) -> tuple[pto.ScalarType, ...]:
     if not descriptor.dtypes:
         raise ValueError("descriptor does not declare any dtype signatures")
     prototype = descriptor.dtypes[0]
+    parameter_specs = getattr(descriptor, "_parameter_specs", ())
     typevar_bindings: dict[str, pto.ScalarType] = {}
     concrete: list[pto.ScalarType] = []
-    for pattern in prototype:
+    for index, pattern in enumerate(prototype):
+        param_spec = parameter_specs[index] if index < len(parameter_specs) else None
         if isinstance(pattern, pto.TypeVariable):
             bound = typevar_bindings.get(pattern.name)
             if bound is None:
-                bound = pto.f32
+                bound = _default_parameter_dtype(param_spec, pattern)
                 typevar_bindings[pattern.name] = bound
             concrete.append(bound)
             continue
-        concrete.append(_default_concrete_dtype(pattern))
+        concrete.append(_default_parameter_dtype(param_spec, pattern))
     return tuple(concrete)
 
 
