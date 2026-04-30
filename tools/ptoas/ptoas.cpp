@@ -561,7 +561,9 @@ static bool containsVPTOIR(llvm::StringRef input) {
          containsVPTOOpPrefix(line, "pto.cube_load") ||
          containsVPTOOpPrefix(line, "pto.cube_load_frac") ||
          containsVPTOOpPrefix(line, "pto.left_load") ||
+         containsVPTOOpPrefix(line, "pto.left_load_mx") ||
          containsVPTOOpPrefix(line, "pto.right_load") ||
+         containsVPTOOpPrefix(line, "pto.right_load_mx") ||
          containsVPTOOpPrefix(line, "pto.acc_store_fix") ||
          containsVPTOOpPrefix(line, "pto.acc_store") ||
          containsVPTOOpPrefix(line, "pto.set_loop") ||

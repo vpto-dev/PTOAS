@@ -4293,7 +4293,10 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     Value srcRaw = adaptor.getSource();
     Value dstRaw = adaptor.getDestination();
-    if (!srcRaw || !dstRaw || !adaptor.getK() || !adaptor.getN())
+    if (!srcRaw || !dstRaw || !adaptor.getXStartPosition() ||
+        !adaptor.getYStartPosition() || !adaptor.getXStep() ||
+        !adaptor.getYStep() || !adaptor.getSrcStride() ||
+        !adaptor.getDstStride())
       return rewriter.notifyMatchFailure(op, "expected converted operands");
     if (!isa<LLVM::LLVMPointerType>(srcRaw.getType()) ||
         !isa<LLVM::LLVMPointerType>(dstRaw.getType()))
@@ -4301,45 +4304,32 @@ public:
 
     constexpr unsigned cbufAddressSpace =
         static_cast<unsigned>(pto::AddressSpace::MAT);
-    constexpr unsigned cbAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::RIGHT);
+    constexpr unsigned caAddressSpace =
+        static_cast<unsigned>(pto::AddressSpace::LEFT);
     FailureOr<Value> src = reinterpretPointerToAddrSpace(op, srcRaw, cbufAddressSpace);
-    FailureOr<Value> dst = reinterpretPointerToAddrSpace(op, dstRaw, cbAddressSpace);
+    FailureOr<Value> dst = reinterpretPointerToAddrSpace(op, dstRaw, caAddressSpace);
     if (failed(src) || failed(dst))
-      return rewriter.notifyMatchFailure(op, "failed to map cbuf/cb pointer spaces");
+      return rewriter.notifyMatchFailure(op, "failed to map cbuf/ca pointer spaces");
 
     Type sourceElemType = cast<pto::PtrType>(op.getSource().getType()).getElementType();
     unsigned elemBitWidth = sourceElemType.getIntOrFloatBitWidth();
     if (elemBitWidth == 0 || (elemBitWidth % 8) != 0)
       return rewriter.notifyMatchFailure(op,
                                          "unsupported load_cbuf_to_cb_mx element type");
-    uint64_t elemBytes = elemBitWidth / 8;
-    Location loc = op.getLoc();
-    auto constant = [&](uint64_t value) -> Value {
-      return rewriter.create<arith::ConstantIntOp>(loc, value, 64);
-    };
-    auto ceilDivConst = [&](Value value, uint64_t divisor) -> Value {
-      Value bias = constant(divisor - 1);
-      Value sum = rewriter.create<arith::AddIOp>(loc, value, bias);
-      return rewriter.create<arith::DivUIOp>(loc, sum, constant(divisor));
-    };
-    Value zero = constant(0);
-    Value mStep = ceilDivConst(adaptor.getN(), 16);
-    Value kBytes =
-        rewriter.create<arith::MulIOp>(loc, adaptor.getK(), constant(elemBytes));
-    Value kStep = ceilDivConst(kBytes, 32);
-    Value stride = ceilDivConst(adaptor.getN(), 16);
     FailureOr<Value> config0 =
-        packLoadCbufToCbConfig0(op, zero, zero, mStep, kStep);
+        packLoadCbufToCaConfig0(op, adaptor.getXStartPosition(),
+                                adaptor.getYStartPosition(), adaptor.getXStep(),
+                                adaptor.getYStep());
     FailureOr<Value> config1 =
-        packLoadCbufToCbConfig1(op, stride, stride);
+        packLoadCbufToCaConfig1(op, adaptor.getSrcStride(),
+                                adaptor.getDstStride());
     if (failed(config0) || failed(config1))
       return rewriter.notifyMatchFailure(op,
                                          "failed to pack load_cbuf_to_cb_mx config");
     auto i64Ty = rewriter.getI64Type();
     Value dstAddr = rewriter.create<LLVM::PtrToIntOp>(op.getLoc(), i64Ty, *dst);
 
-    StringRef calleeName = buildLoadCbufToCbMxCallee(op.getContext());
+    StringRef calleeName = buildLoadCbufToCaMxCallee(op.getContext());
     auto funcType = rewriter.getFunctionType(
         TypeRange{i64Ty, src->getType(), i64Ty, i64Ty},
         TypeRange{});

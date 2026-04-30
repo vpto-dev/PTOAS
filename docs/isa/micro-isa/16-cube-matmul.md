@@ -332,6 +332,54 @@ pto.right_load %l1_b, %l0b, %c16_i64, %c16_i64
 
 ---
 
+### `pto.left_load_mx`
+
+- **syntax:**
+```mlir
+pto.left_load_mx %src, %dst, %m, %k
+  : !pto.ptr<T, mat>, !pto.ptr<T, left>, i64, i64
+```
+- **semantics:** MX-mode L1-to-L0A wrapper.
+
+**Parameter Table:** `%src`, `%dst`, `%m`, `%k`.
+
+**Constraints:**
+
+- Lowers to `pto.load_cbuf_to_ca_mx`.
+
+**Example:**
+
+```mlir
+pto.left_load_mx %l1_a, %l0a, %c16_i64, %c64_i64
+  : !pto.ptr<f8E4M3FN, mat>, !pto.ptr<f8E4M3FN, left>, i64, i64
+```
+
+---
+
+### `pto.right_load_mx`
+
+- **syntax:**
+```mlir
+pto.right_load_mx %src, %dst, %k, %n
+  : !pto.ptr<T, mat>, !pto.ptr<T, right>, i64, i64
+```
+- **semantics:** MX-mode L1-to-L0B wrapper.
+
+**Parameter Table:** `%src`, `%dst`, `%k`, `%n`.
+
+**Constraints:**
+
+- Lowers to `pto.load_cbuf_to_cb_mx`.
+
+**Example:**
+
+```mlir
+pto.right_load_mx %l1_b, %l0b, %c64_i64, %c16_i64
+  : !pto.ptr<f8E4M3FN, mat>, !pto.ptr<f8E4M3FN, right>, i64, i64
+```
+
+---
+
 ### `pto.acc_store`
 
 - **syntax:**

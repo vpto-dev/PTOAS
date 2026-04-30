@@ -616,14 +616,22 @@ def PTO_LoadCbufToCbMxOp : PTO_Op<"load_cbuf_to_cb_mx"> {
   let arguments = (ins
     PTO_BufferType:$source,
     PTO_BufferType:$destination,
-    I64:$k,
-    I64:$n
+    I64:$x_start_position,
+    I64:$y_start_position,
+    I64:$x_step,
+    I64:$y_step,
+    I64:$src_stride,
+    I64:$dst_stride
   );
 
   let results = (outs);
 
   let assemblyFormat = [{
-    $source `,` $destination `,` $k `,` $n attr-dict `:` type($source) `,` type($destination) `,` type($k) `,` type($n)
+    $source `,` $destination `,` $x_start_position `,` $y_start_position `,`
+    $x_step `,` $y_step `,` $src_stride `,` $dst_stride attr-dict `:`
+    type($source) `,` type($destination) `,` type($x_start_position) `,`
+    type($y_start_position) `,` type($x_step) `,` type($y_step) `,`
+    type($src_stride) `,` type($dst_stride)
   }];
 }
 
@@ -1950,6 +1958,42 @@ def PTO_RightLoadOp : PTO_Op<"right_load", [
     I64:$k,
     I64:$n,
     DefaultValuedAttr<BoolAttr, "false">:$transpose
+  );
+
+  let results = (outs);
+
+  let assemblyFormat = [{
+    $source `,` $destination `,` $k `,` $n attr-dict `:` type($source) `,`
+    type($destination) `,` type($k) `,` type($n)
+  }];
+}
+
+def PTO_LeftLoadMxOp : PTO_Op<"left_load_mx", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_BufferType:$source,
+    PTO_BufferType:$destination,
+    I64:$m,
+    I64:$k
+  );
+
+  let results = (outs);
+
+  let assemblyFormat = [{
+    $source `,` $destination `,` $m `,` $k attr-dict `:` type($source) `,`
+    type($destination) `,` type($m) `,` type($k)
+  }];
+}
+
+def PTO_RightLoadMxOp : PTO_Op<"right_load_mx", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_BufferType:$source,
+    PTO_BufferType:$destination,
+    I64:$k,
+    I64:$n
   );
 
   let results = (outs);

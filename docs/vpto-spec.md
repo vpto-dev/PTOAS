@@ -997,7 +997,7 @@ This section provides a categorized overview of all PTO micro Instruction operat
 | 13 | [DSA/SFU Ops](isa/micro-isa/13-dsa-sfu-ops.md) | Specialized ops, index generation, and sorting helpers | 9 | `pto.vlrelu`, `pto.vprelu`, `pto.vexpdif`, `pto.vaxpy`, `pto.vmull`, `pto.vmula`, `pto.vci`, `pto.vbitsort`, `pto.vmrgsort4` |
 | 14 | [Arith (Shared MLIR Dialect)](isa/micro-isa/14-shared-arith.md) | Full scalar `arith` surface used around PTO ops; the companion page lists categories and representative examples | all scalar ops | `arith.constant`, `arith.addi`, `arith.addf`, `arith.cmpi`, `arith.cmpf`, `arith.select`, `arith.index_cast`, `arith.extsi`, `arith.trunci`, `arith.andi`, `arith.shli`, etc. |
 | 15 | [SCF (Shared MLIR Dialect)](isa/micro-isa/15-shared-scf.md) | Structured loops, branches, and loop-carried state around PTO regions | 5 | `scf.for`, `scf.if`, `scf.while`, `scf.condition`, `scf.yield` |
-| 16 | [Cube Matrix Multiply (MAT)](isa/micro-isa/16-cube-matmul.md) | GM↔L1 (`cbuf`) staging, L1 (`cbuf`)↔UB side moves, L1→L0A/L0B loads, L0C (`acc`) matmul, and wrapper bridge load/store ops | 16+ | `pto.copy_gm_to_cbuf`, `pto.copy_gm_to_cbuf_multi_nd2nz`, `pto.copy_gm_to_cbuf_multi_dn2nz`, `pto.load_cbuf_to_ca`, `pto.load_cbuf_to_cb`, `pto.mad`, `pto.mad_acc`, `pto.mad_bias`, `pto.mad_mx`, `pto.mad_mx_acc`, `pto.mad_mx_bias`, `pto.copy_matrix_cc_to_gm`, `pto.copy_matrix_cc_to_cbuf`, `pto.copy_matrix_cc_to_ub`, `pto.copy_cbuf_to_bt`, `pto.copy_cbuf_to_fbuf`, `pto.cube_load`, `pto.cube_store`, `pto.cube_load_frac`, `pto.left_load`, `pto.right_load`, `pto.acc_store`, `pto.acc_store_gm`, `pto.acc_store_ub` |
+| 16 | [Cube Matrix Multiply (MAT)](isa/micro-isa/16-cube-matmul.md) | GM↔L1 (`cbuf`) staging, L1 (`cbuf`)↔UB side moves, L1→L0A/L0B loads, L0C (`acc`) matmul, and wrapper bridge load/store ops | 16+ | `pto.copy_gm_to_cbuf`, `pto.copy_gm_to_cbuf_multi_nd2nz`, `pto.copy_gm_to_cbuf_multi_dn2nz`, `pto.load_cbuf_to_ca`, `pto.load_cbuf_to_cb`, `pto.load_cbuf_to_ca_mx`, `pto.load_cbuf_to_cb_mx`, `pto.mad`, `pto.mad_acc`, `pto.mad_bias`, `pto.mad_mx`, `pto.mad_mx_acc`, `pto.mad_mx_bias`, `pto.copy_matrix_cc_to_gm`, `pto.copy_matrix_cc_to_cbuf`, `pto.copy_matrix_cc_to_ub`, `pto.copy_cbuf_to_bt`, `pto.copy_cbuf_to_fbuf`, `pto.cube_load`, `pto.cube_store`, `pto.cube_load_frac`, `pto.left_load`, `pto.right_load`, `pto.left_load_mx`, `pto.right_load_mx`, `pto.acc_store`, `pto.acc_store_gm`, `pto.acc_store_ub` |
 
 ---
 
@@ -1016,7 +1016,7 @@ This section provides a categorized overview of all PTO micro Instruction operat
 | L1→UB bridge wrapper | 16 | `pto.cube_store` |
 | L1→BT (bridge wrapper) | 16 | `pto.bias_load` |
 | L1→L0A / L1→L0B | 16 | `pto.load_cbuf_to_ca`, `pto.load_cbuf_to_cb` |
-| L1→L0A / L1→L0B bridge wrapper | 16 | `pto.left_load`, `pto.right_load` |
+| L1→L0A / L1→L0B bridge wrapper | 16 | `pto.left_load`, `pto.right_load`, `pto.left_load_mx`, `pto.right_load_mx` |
 | L0C→GM cube writeback | 16 | `pto.copy_matrix_cc_to_gm` |
 | L0C→L1 bridge wrapper | 16 | `pto.acc_store` |
 | L0C→GM bridge wrapper | 16 | `pto.acc_store_gm` |

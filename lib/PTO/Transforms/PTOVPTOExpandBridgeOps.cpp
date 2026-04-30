@@ -834,6 +834,57 @@ struct ExpandRightLoadPattern : public OpRewritePattern<pto::RightLoadOp> {
   }
 };
 
+struct ExpandLeftLoadMxPattern : public OpRewritePattern<pto::LeftLoadMxOp> {
+  using OpRewritePattern<pto::LeftLoadMxOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(pto::LeftLoadMxOp op,
+                                PatternRewriter &rewriter) const override {
+    rewriter.create<pto::LoadCbufToCaMxOp>(op.getLoc(), op.getSource(),
+                                           op.getDestination(), op.getM(),
+                                           op.getK());
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+struct ExpandRightLoadMxPattern : public OpRewritePattern<pto::RightLoadMxOp> {
+  using OpRewritePattern<pto::RightLoadMxOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(pto::RightLoadMxOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto sourceType = dyn_cast<pto::PtrType>(op.getSource().getType());
+    if (!sourceType)
+      return rewriter.notifyMatchFailure(op, "expected typed L1 source");
+
+    unsigned elemBitWidth = sourceType.getElementType().getIntOrFloatBitWidth();
+    if (elemBitWidth == 0 || (elemBitWidth % 8) != 0)
+      return rewriter.notifyMatchFailure(op, "unsupported element type");
+    uint64_t elemBytes = elemBitWidth / 8;
+
+    auto constant = [&](uint64_t value) -> Value {
+      return rewriter.create<arith::ConstantIntOp>(loc, value, 64);
+    };
+    auto ceilDivConst = [&](Value value, uint64_t divisor) -> Value {
+      Value bias = constant(divisor - 1);
+      Value sum = rewriter.create<arith::AddIOp>(loc, value, bias);
+      return rewriter.create<arith::DivUIOp>(loc, sum, constant(divisor));
+    };
+
+    Value zero = constant(0);
+    Value one = constant(1);
+    Value yStep = ceilDivConst(
+        rewriter.create<arith::MulIOp>(loc, op.getK(), constant(elemBytes)), 32);
+    Value stride = ceilDivConst(op.getN(), 16);
+
+    rewriter.create<pto::LoadCbufToCbMxOp>(
+        loc, op.getSource(), op.getDestination(), zero, zero, one, yStep, stride,
+        stride);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct ExpandAccStorePattern : public OpRewritePattern<pto::AccStoreOp> {
   using OpRewritePattern<pto::AccStoreOp>::OpRewritePattern;
 
@@ -1016,7 +1067,8 @@ struct PTOVPTOExpandBridgeOpsPass
                  ExpandDmaCopyPattern, ExpandCubeLoadPattern,
                  ExpandCubeStorePattern, ExpandBiasLoadPattern,
                  ExpandCubeLoadFracPattern, ExpandLeftLoadPattern,
-                 ExpandRightLoadPattern, ExpandAccStorePattern,
+                 ExpandRightLoadPattern, ExpandLeftLoadMxPattern,
+                 ExpandRightLoadMxPattern, ExpandAccStorePattern,
                  ExpandAccStoreGmPattern,
                  ExpandAccStoreUbPattern>(&getContext());
     if (failed(applyPatternsAndFoldGreedily(func, std::move(patterns))))
