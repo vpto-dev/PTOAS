@@ -19,6 +19,7 @@
 #include "mlir/IR/Location.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/raw_ostream.h"
 #include <climits>
 #include <deque>
 #include <memory>
@@ -42,6 +43,23 @@ using SyncMap = llvm::MapVector<
     mlir::pto::syncsolver::OperationBase *,
     std::deque<std::unique_ptr<mlir::pto::syncsolver::SyncOp>>>;
 using SyncBeforeAfterMap = std::pair<SyncMap, SyncMap>;
+
+namespace mlir::pto {
+inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                                     TCoreType coreType) {
+  switch (coreType) {
+  case TCoreType::VECTOR:
+    return os << "VECTOR";
+  case TCoreType::CUBE:
+    return os << "CUBE";
+  case TCoreType::CUBE_OR_VECTOR:
+    return os << "CUBE_OR_VECTOR";
+  case TCoreType::CUBE_AND_VECTOR:
+    return os << "CUBE_AND_VECTOR";
+  }
+  return os << "UNKNOWN";
+}
+} // namespace mlir::pto
 
 namespace mlir::pto::syncsolver {
 struct CorePipeInfo {
