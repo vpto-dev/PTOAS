@@ -791,6 +791,273 @@ void mlir::pto::TGatherOp::print(OpAsmPrinter &p) {
   }
 }
 
+namespace {
+
+struct CommRecvClause {
+  OpAsmParser::UnresolvedOperand ping;
+  std::optional<OpAsmParser::UnresolvedOperand> pong;
+  Type pingTy;
+  Type pongTy;
+};
+
+static ParseResult parseCommRecvClause(OpAsmParser &parser,
+                                       CommRecvClause &recvClause) {
+  if (parser.parseKeyword("recv") || parser.parseLParen() ||
+      parser.parseOperand(recvClause.ping))
+    return failure();
+  if (succeeded(parser.parseOptionalComma())) {
+    OpAsmParser::UnresolvedOperand pong;
+    if (parser.parseOperand(pong))
+      return failure();
+    recvClause.pong = pong;
+  }
+  return parser.parseRParen();
+}
+
+static ParseResult parseCommCollectiveTail(
+    OpAsmParser &parser, OperationState &result,
+    ArrayRef<OpAsmParser::UnresolvedOperand> fixedOperands,
+    SmallVectorImpl<Type> &fixedTypes, CommRecvClause &recvClause,
+    SmallVectorImpl<OpAsmParser::UnresolvedOperand> &groupOps,
+    SmallVectorImpl<Type> &groupTypes, ArrayRef<int32_t> operandSegmentsPrefix,
+    ArrayRef<StringRef> requiredAttrs) {
+  if (parser.parseComma() || parser.parseKeyword("group") || parser.parseLParen())
+    return failure();
+
+  OpAsmParser::UnresolvedOperand group;
+  if (parser.parseOperand(group))
+    return failure();
+  groupOps.push_back(group);
+  while (succeeded(parser.parseOptionalComma())) {
+    if (parser.parseOperand(group))
+      return failure();
+    groupOps.push_back(group);
+  }
+
+  if (parser.parseRParen())
+    return failure();
+
+  if (parser.parseColon())
+    return failure();
+
+  for (size_t i = 0; i < fixedTypes.size(); ++i) {
+    if (i != 0 && parser.parseComma())
+      return failure();
+    if (parser.parseType(fixedTypes[i]))
+      return failure();
+  }
+  if (parser.parseComma() || parser.parseType(recvClause.pingTy))
+    return failure();
+  if (recvClause.pong) {
+    if (parser.parseComma() || parser.parseType(recvClause.pongTy))
+      return failure();
+  }
+  for (size_t i = 0; i < groupOps.size(); ++i) {
+    Type groupTy;
+    if (parser.parseComma() || parser.parseType(groupTy))
+      return failure();
+    groupTypes.push_back(groupTy);
+  }
+  if (parser.parseRParen())
+    return failure();
+
+  NamedAttrList attrs;
+  if (parser.parseOptionalAttrDict(attrs))
+    return failure();
+  for (StringRef attrName : requiredAttrs) {
+    if (!attrs.get(attrName)) {
+      return parser.emitError(parser.getCurrentLocation())
+             << "expected '" << attrName << "' attribute";
+    }
+  }
+  result.addAttributes(attrs);
+
+  for (auto [operand, type] : llvm::zip_equal(fixedOperands, fixedTypes)) {
+    if (parser.resolveOperand(operand, type, result.operands))
+      return failure();
+  }
+  if (parser.resolveOperand(recvClause.ping, recvClause.pingTy, result.operands))
+    return failure();
+  if (recvClause.pong &&
+      parser.resolveOperand(*recvClause.pong, recvClause.pongTy, result.operands))
+    return failure();
+  if (parser.resolveOperands(groupOps, groupTypes, parser.getCurrentLocation(),
+                             result.operands))
+    return failure();
+
+  SmallVector<int32_t, 5> segmentSizes(operandSegmentsPrefix.begin(),
+                                       operandSegmentsPrefix.end());
+  segmentSizes.push_back(static_cast<int32_t>(groupOps.size()));
+  result.addAttribute("operandSegmentSizes",
+                      parser.getBuilder().getDenseI32ArrayAttr(segmentSizes));
+  return success();
+}
+
+static void printCommRecvClause(OpAsmPrinter &p, Value ping, Value pong) {
+  p << "recv(" << ping;
+  if (pong)
+    p << ", " << pong;
+  p << ")";
+}
+
+static void printCommGroupTypes(OpAsmPrinter &p, ValueRange group) {
+  for (Value groupValue : group)
+    p << ", " << groupValue.getType();
+}
+
+static void printCommGroupClause(OpAsmPrinter &p, ValueRange group) {
+  p << "group(";
+  p.printOperands(group);
+  p << ")";
+}
+
+} // namespace
+
+ParseResult mlir::pto::TBroadcastOp::parse(OpAsmParser &parser,
+                                           OperationState &result) {
+  OpAsmParser::UnresolvedOperand src;
+  CommRecvClause recvClause;
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> groupOps;
+  SmallVector<Type, 4> groupTypes;
+
+  if (parser.parseLParen() || parser.parseOperand(src) || parser.parseComma())
+    return failure();
+  if (failed(parseCommRecvClause(parser, recvClause)))
+    return failure();
+
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> fixedOperands{src};
+  SmallVector<Type, 1> fixedTypes(1);
+  if (failed(parseCommCollectiveTail(parser, result, fixedOperands, fixedTypes,
+                                     recvClause, groupOps, groupTypes,
+                                     {1, 1, recvClause.pong ? 1 : 0}, {"root"})))
+    return failure();
+  return success();
+}
+
+void mlir::pto::TBroadcastOp::print(OpAsmPrinter &p) {
+  p << "(" << getSrc() << ", ";
+  printCommRecvClause(p, getPing(), getPong());
+  p << ", ";
+  printCommGroupClause(p, getGroup());
+  p << " : " << getSrc().getType() << ", " << getPing().getType();
+  if (getPong())
+    p << ", " << getPong().getType();
+  printCommGroupTypes(p, getGroup());
+  p << ")";
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes"});
+}
+
+ParseResult mlir::pto::CommTGatherOp::parse(OpAsmParser &parser,
+                                            OperationState &result) {
+  OpAsmParser::UnresolvedOperand dst;
+  CommRecvClause recvClause;
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> groupOps;
+  SmallVector<Type, 4> groupTypes;
+
+  if (parser.parseLParen() || parser.parseOperand(dst) || parser.parseComma())
+    return failure();
+  if (failed(parseCommRecvClause(parser, recvClause)))
+    return failure();
+
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> fixedOperands{dst};
+  SmallVector<Type, 1> fixedTypes(1);
+  if (failed(parseCommCollectiveTail(
+          parser, result, fixedOperands, fixedTypes, recvClause, groupOps,
+          groupTypes, {1, 1, recvClause.pong ? 1 : 0},
+          {"root"})))
+    return failure();
+  return success();
+}
+
+void mlir::pto::CommTGatherOp::print(OpAsmPrinter &p) {
+  p << "(" << getDst() << ", ";
+  printCommRecvClause(p, getPing(), getPong());
+  p << ", ";
+  printCommGroupClause(p, getGroup());
+  p << " : " << getDst().getType() << ", " << getPing().getType();
+  if (getPong())
+    p << ", " << getPong().getType();
+  printCommGroupTypes(p, getGroup());
+  p << ")";
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes"});
+}
+
+ParseResult mlir::pto::CommTScatterOp::parse(OpAsmParser &parser,
+                                             OperationState &result) {
+  OpAsmParser::UnresolvedOperand src;
+  CommRecvClause recvClause;
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> groupOps;
+  SmallVector<Type, 4> groupTypes;
+
+  if (parser.parseLParen() || parser.parseOperand(src) || parser.parseComma())
+    return failure();
+  if (failed(parseCommRecvClause(parser, recvClause)))
+    return failure();
+
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> fixedOperands{src};
+  SmallVector<Type, 1> fixedTypes(1);
+  if (failed(parseCommCollectiveTail(
+          parser, result, fixedOperands, fixedTypes, recvClause, groupOps,
+          groupTypes, {1, 1, recvClause.pong ? 1 : 0},
+          {"root"})))
+    return failure();
+  return success();
+}
+
+void mlir::pto::CommTScatterOp::print(OpAsmPrinter &p) {
+  p << "(" << getSrc() << ", ";
+  printCommRecvClause(p, getPing(), getPong());
+  p << ", ";
+  printCommGroupClause(p, getGroup());
+  p << " : " << getSrc().getType() << ", " << getPing().getType();
+  if (getPong())
+    p << ", " << getPong().getType();
+  printCommGroupTypes(p, getGroup());
+  p << ")";
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes"});
+}
+
+ParseResult mlir::pto::TReduceOp::parse(OpAsmParser &parser,
+                                        OperationState &result) {
+  OpAsmParser::UnresolvedOperand dst, acc;
+  CommRecvClause recvClause;
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> groupOps;
+  SmallVector<Type, 4> groupTypes;
+
+  if (parser.parseLParen() || parser.parseOperand(dst) || parser.parseComma() ||
+      parser.parseOperand(acc) || parser.parseComma())
+    return failure();
+  if (failed(parseCommRecvClause(parser, recvClause)))
+    return failure();
+
+  SmallVector<OpAsmParser::UnresolvedOperand, 2> fixedOperands{dst, acc};
+  SmallVector<Type, 2> fixedTypes(2);
+  if (failed(parseCommCollectiveTail(
+          parser, result, fixedOperands, fixedTypes, recvClause, groupOps,
+          groupTypes, {1, 1, 1, recvClause.pong ? 1 : 0},
+          {"reduceOp", "root"})))
+    return failure();
+  return success();
+}
+
+void mlir::pto::TReduceOp::print(OpAsmPrinter &p) {
+  p << "(" << getDst() << ", " << getAcc() << ", ";
+  printCommRecvClause(p, getRecvPing(), getRecvPong());
+  p << ", ";
+  printCommGroupClause(p, getGroup());
+  p << " : " << getDst().getType() << ", " << getAcc().getType() << ", "
+    << getRecvPing().getType();
+  if (getRecvPong())
+    p << ", " << getRecvPong().getType();
+  printCommGroupTypes(p, getGroup());
+  p << ")";
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes"});
+}
+
 ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
                                                OperationState &result) {
   OpAsmParser::UnresolvedOperand ptr;
