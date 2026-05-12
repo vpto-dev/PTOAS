@@ -460,6 +460,42 @@ def PTO_RoundModeAttr : EnumAttr<PTO_Dialect, PTO_RoundModeEnum, "round_mode"> {
 }
 
 //===----------------------------------------------------------------------===//
+// MAD semantic controls
+//===----------------------------------------------------------------------===//
+
+def PTO_MadUnitFlagModeEnum : PTO_I32Enum<
+  "MadUnitFlagMode", "PTO MAD producer unit-flag mode", [
+    I32EnumAttrCase<"CheckOnly", 0, "check_only">,
+    I32EnumAttrCase<"CheckAndSet", 1, "check_and_set">
+  ]>;
+
+def PTO_MadUnitFlagModeAttr
+    : EnumAttr<PTO_Dialect, PTO_MadUnitFlagModeEnum, "mad_unit_flag_mode"> {
+  let summary = "MAD producer unit-flag mode attribute";
+}
+
+def PTO_Tf32ModeEnum : PTO_I32Enum<
+  "Tf32Mode", "PTO MAD TF32 rounding mode", [
+    I32EnumAttrCase<"RoundEven", 0, "round_even">,
+    I32EnumAttrCase<"RoundAway", 1, "round_away">
+  ]>;
+
+def PTO_Tf32ModeAttr : EnumAttr<PTO_Dialect, PTO_Tf32ModeEnum, "tf32_mode"> {
+  let summary = "MAD TF32 rounding mode attribute";
+}
+
+def PTO_MadSatModeEnum : PTO_I32Enum<
+  "MadSatMode", "PTO MAD floating exceptional-value saturation mode", [
+    I32EnumAttrCase<"Sat", 0, "sat">,
+    I32EnumAttrCase<"NoSat", 1, "nosat">
+  ]>;
+
+def PTO_MadSatModeAttr
+    : EnumAttr<PTO_Dialect, PTO_MadSatModeEnum, "mad_sat_mode"> {
+  let summary = "MAD floating exceptional-value saturation mode attribute";
+}
+
+//===----------------------------------------------------------------------===//
 // SaturationMode
 //===----------------------------------------------------------------------===//
 

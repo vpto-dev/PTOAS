@@ -70,7 +70,7 @@ module attributes {pto.target_arch = "a5"} {
         : !pto.ptr<f16, mat>, !pto.ptr<f16, right>, i64, i64
       pto.set_flag["PIPE_MTE1", "PIPE_M", "EVENT_ID0"]
       pto.wait_flag["PIPE_MTE1", "PIPE_M", "EVENT_ID0"]
-      pto.mad %l0a, %l0b, %l0c, %c40_i64, %c64_i64, %c50_i64 {unit_flag_ctrl = 3 : i32}
+      pto.mad %l0a, %l0b, %l0c, %c40_i64, %c64_i64, %c50_i64 unit_flag(check_and_set)
         : !pto.ptr<f16, left>, !pto.ptr<f16, right>, !pto.ptr<f32, acc>, i64, i64, i64
 
       pto.set_flag["PIPE_M", "PIPE_FIX", "EVENT_ID1"]

@@ -1,17 +1,59 @@
 # 16. Cube Matrix Multiply (MAT)
 
 > **Category:** Cube unit ops — staged load/store and matrix multiply
-> **Raw-op reference:** See `16-cube-matmul-raw.md` for low-level bridge/raw ops
 
 ---
 
 ## Wrapper-Layer Compute Ops
+
+The `pto.mad*` family describes a logical matrix multiply over already prepared
+cube tiles:
+
+- `%lhs` is the logical `M x K` left matrix tile in `left`.
+- `%rhs` is the logical `K x N` right matrix tile in `right`.
+- `%dst` is the logical `M x N` accumulator tile in `acc`.
+- `%m`, `%n`, and `%k` are element counts in the logical M/N/K dimensions, not
+  byte sizes.
+- The matrix data type is inferred from the pointer element types. Do not pass
+  a separate type selector. Invalid target-profile type combinations are not
+  valid programs.
+
+Common optional clauses:
+
+| Clause | Values | Semantic effect |
+|--------|--------|-----------------|
+| `unit_flag(...)` | `check_only`, `check_and_set` | Enables producer-side unit-flag participation for this result tile. `check_only` only performs the producer-side availability check; `check_and_set` also publishes the produced tile for downstream consumers. Omit it when the schedule does not use unit-flag synchronization. |
+| `disable_gemv` | flag | Selects the normal matmul `%lhs` consumption contract for `M = 1` GEMV operations. When `M = 1`, omitting this flag selects the GEMV `%lhs` consumption contract: `%lhs` must point to an L0A tile organized in the target GEMV A-vector format. On the current A5 contract, the logical `A[1, K]` values must be provided as a sequential K-element vector. Supplying a normal matmul L0A organization while GEMV mode is selected is invalid. Adding `disable_gemv` makes `%lhs` use the normal matmul consumption contract instead. For `M != 1`, the op uses the normal matmul `%lhs` consumption contract. The mathematical result is unchanged: all modes compute `A @ B`; only the required L0A organization for `%lhs` changes in the `M = 1` GEMV case. |
+| `sat` / `nosat` | flags | Optional CUBE floating exceptional-value mode. With `sat`, exceptional input values participating in the multiply are normalized before arithmetic (`+/-INF -> +/-finite type max`, `NaN -> 0`), and finite arithmetic overflow saturates to the finite type range instead of producing INF. With `nosat`, INF/NaN inputs are preserved and overflow can produce INF/NaN through the multiply-accumulate. Omit both to use the surrounding execution mode. These flags are valid only for floating/MX MAD forms, not integer MAD. |
+| `tf32_mode(...)` | `round_even`, `round_away` | Valid only for non-MX `f32 x f32 -> f32`. FP32 inputs are rounded to TF32 precision before multiplication; accumulation/output remain FP32. `round_even` uses nearest-even tie handling; `round_away` uses nearest-away tie handling. |
+| `n_dir` | flag | Requests N-direction result production. This does not change the mathematical matrix value; it changes the producer ordering expected by schedules that combine unit flags with later layout movement. Omit it for the default M-direction production order. |
+
+`pto.mad_mx*` additionally applies microscaling. The scale operands are not
+explicit operands of the matmul op: they are associated with the `%lhs` and
+`%rhs` tiles by the MX load/layout contract. Logically, each group of 32
+K-direction values shares one scale value. In the current target profile, the
+supported MX data tile type is `f8E4M3FN`:
+
+```text
+mx_matmul(lhs, rhs)[m, n] =
+  sum_k (lhs[m, k] * scale_lhs[m, floor(k / 32)]) *
+        (rhs[k, n] * scale_rhs[floor(k / 32), n])
+```
+
+The corresponding scale data must have been loaded into the matching MX side
+buffers before the `pto.mad_mx*` op executes, and it must be aligned with the
+data tile selected by `%lhs` / `%rhs`.
 
 ### `pto.mad`
 
 - **syntax:**
 ```mlir
 pto.mad %lhs, %rhs, %dst, %m, %n, %k
+  unit_flag(check_only | check_and_set)?
+  disable_gemv?
+  (sat | nosat)?
+  tf32_mode(round_even | round_away)?
+  n_dir?
   : !pto.ptr<A, left>, !pto.ptr<B, right>, !pto.ptr<C, acc>, i64, i64, i64
 ```
 - **semantics:** Zero-init cube matmul, `dst = lhs * rhs`.
@@ -26,13 +68,18 @@ pto.mad %lhs, %rhs, %dst, %m, %n, %k
 | `%m` | i64 | M size |
 | `%n` | i64 | N size |
 | `%k` | i64 | K size |
-| `unit_flag_ctrl` | i32 attr | Accumulator control flag |
-| `disable_gemv` | bool attr | GEMV-disable control bit |
+| `unit_flag` | clause | Optional unit-flag producer control; see common clauses |
+| `disable_gemv` | flag | Optional GEMV disable; see common clauses |
+| `sat` / `nosat` | flag | Optional floating exceptional-value mode override; see common clauses |
+| `tf32_mode` | clause | Optional TF32 input rounding; see common clauses |
+| `n_dir` | flag | Optional N-direction producer order; see common clauses |
 
 **Constraints:**
 
 - Address spaces must be `left`, `right`, `acc`.
-- `unit_flag_ctrl` currently uses `0/2/3` values in existing tests.
+- `unit_flag(check_only)` and `unit_flag(check_and_set)` are the supported forms.
+- `tf32_mode(...)` requires `f32` lhs, rhs, and dst element types.
+- `sat` / `nosat` requires floating or MX lhs/rhs/dst element types; integer `s8 -> s32` MAD does not accept this clause.
 
 **Example:**
 
@@ -48,6 +95,11 @@ pto.mad %l0a, %l0b, %l0c, %c16_i64, %c16_i64, %c16_i64
 - **syntax:**
 ```mlir
 pto.mad_acc %lhs, %rhs, %dst, %m, %n, %k
+  unit_flag(check_only | check_and_set)?
+  disable_gemv?
+  (sat | nosat)?
+  tf32_mode(round_even | round_away)?
+  n_dir?
   : !pto.ptr<A, left>, !pto.ptr<B, right>, !pto.ptr<C, acc>, i64, i64, i64
 ```
 - **semantics:** Accumulating cube matmul, `dst += lhs * rhs`.
@@ -62,17 +114,22 @@ pto.mad_acc %lhs, %rhs, %dst, %m, %n, %k
 | `%m` | i64 | M size |
 | `%n` | i64 | N size |
 | `%k` | i64 | K size |
-| `unit_flag_ctrl` | i32 attr | Accumulator control flag |
-| `disable_gemv` | bool attr | GEMV-disable control bit |
+| `unit_flag` | clause | Optional unit-flag producer control; see common clauses |
+| `disable_gemv` | flag | Optional GEMV disable; see common clauses |
+| `sat` / `nosat` | flag | Optional floating exceptional-value mode override; see common clauses |
+| `tf32_mode` | clause | Optional TF32 input rounding; see common clauses |
+| `n_dir` | flag | Optional N-direction producer order; see common clauses |
 
 **Constraints:**
 
 - Same address space/type family requirements as `pto.mad`.
+- `tf32_mode(...)` requires `f32` lhs, rhs, and dst element types.
+- `sat` / `nosat` requires floating or MX lhs/rhs/dst element types.
 
 **Example:**
 
 ```mlir
-pto.mad_acc %l0a, %l0b, %l0c, %c16_i64, %c16_i64, %c16_i64 {unit_flag_ctrl = 2 : i32}
+pto.mad_acc %l0a, %l0b, %l0c, %c16_i64, %c16_i64, %c16_i64 unit_flag(check_only)
   : !pto.ptr<f16, left>, !pto.ptr<f16, right>, !pto.ptr<f32, acc>, i64, i64, i64
 ```
 
@@ -83,22 +140,40 @@ pto.mad_acc %l0a, %l0b, %l0c, %c16_i64, %c16_i64, %c16_i64 {unit_flag_ctrl = 2 :
 - **syntax:**
 ```mlir
 pto.mad_bias %lhs, %rhs, %dst, %bias, %m, %n, %k
+  unit_flag(check_only | check_and_set)?
+  disable_gemv?
+  (sat | nosat)?
+  tf32_mode(round_even | round_away)?
+  n_dir?
   : !pto.ptr<A, left>, !pto.ptr<B, right>, !pto.ptr<C, acc>, !pto.ptr<C, bias>, i64, i64, i64
 ```
-- **semantics:** Bias-init cube matmul, `dst = lhs * rhs + bias`.
+- **semantics:** Bias-init cube matmul, `dst[m, n] = lhs[m, k] * rhs[k, n] + bias[n]`.
+  The bias operand is not an `M x N` matrix. It points to an `N`-element
+  per-output-channel bias vector in the bias buffer, and that vector is
+  broadcast across the M dimension.
 
 **Parameter Table:**
 
 | Parameter | Width | Description |
 |-----------|-------|-------------|
 | `%lhs` / `%rhs` / `%dst` / `%m` / `%n` / `%k` | - | Same meaning as `pto.mad` |
-| `%bias` | ptr | Bias-table pointer (`!pto.ptr<C, bias>`) |
-| `unit_flag_ctrl` | i32 attr | Accumulator control flag |
-| `disable_gemv` | bool attr | GEMV-disable control bit |
+| `%bias` | ptr | Bias-buffer pointer (`!pto.ptr<C, bias>`) for the `N`-element bias vector. |
+| `unit_flag` | clause | Optional unit-flag producer control; see common clauses |
+| `disable_gemv` | flag | Optional GEMV disable; see common clauses |
+| `sat` / `nosat` | flag | Optional floating exceptional-value mode override; see common clauses |
+| `tf32_mode` | clause | Optional TF32 input rounding; see common clauses |
+| `n_dir` | flag | Optional N-direction producer order; see common clauses |
 
 **Constraints:**
 
 - `%bias` must be in `bias` address space.
+- `%bias` element type must match `%dst` element type.
+- `%bias` must satisfy the target alignment requirement for the bias buffer.
+- Only `N` bias values are consumed. To model a logical `M x N` result, use
+  `bias[None, :]` in the reference calculation, not an independent `M x N`
+  bias matrix.
+- `tf32_mode(...)` requires `f32` lhs, rhs, and dst element types.
+- `sat` / `nosat` requires floating or MX lhs/rhs/dst element types.
 
 **Example:**
 
@@ -114,9 +189,13 @@ pto.mad_bias %l0a, %l0b, %l0c, %bt, %c16_i64, %c16_i64, %c16_i64
 - **syntax:**
 ```mlir
 pto.mad_mx %lhs, %rhs, %dst, %m, %n, %k
+  unit_flag(check_only | check_and_set)?
+  disable_gemv?
+  (sat | nosat)?
+  n_dir?
   : !pto.ptr<A, left>, !pto.ptr<B, right>, !pto.ptr<C, acc>, i64, i64, i64
 ```
-- **semantics:** Zero-init MX cube matmul.
+- **semantics:** Zero-init MX cube matmul, `dst = mx_matmul(lhs, rhs)`.
 
 **Parameter Table:**
 
@@ -127,13 +206,17 @@ pto.mad_mx %lhs, %rhs, %dst, %m, %n, %k
 | `%dst` | ptr | L0C accumulator (`acc`) |
 | `%m` | i64 | M size |
 | `%n` | i64 | N size |
-| `%k` | i64 | K size, typically matching MX tile granularity |
-| `unit_flag_ctrl` | i32 attr | Accumulator control flag |
-| `disable_gemv` | bool attr | GEMV-disable control bit |
+| `%k` | i64 | K size; MX scaling groups values in K-direction chunks of 32 |
+| `unit_flag` | clause | Optional unit-flag producer control; see common clauses |
+| `disable_gemv` | flag | Optional GEMV disable; see common clauses |
+| `sat` / `nosat` | flag | Optional floating exceptional-value mode override; see common clauses |
+| `n_dir` | flag | Optional N-direction producer order; see common clauses |
 
 **Constraints:**
 
-- MX-capable dtype combinations must be respected by backend lowering.
+- Operands must use a target-supported MX dtype combination.
+- The corresponding MX scale data for `%lhs` and `%rhs` must already be
+  prepared and aligned with the data tiles selected by those pointers.
 
 **Example:**
 
@@ -149,9 +232,13 @@ pto.mad_mx %l0a, %l0b, %l0c, %c16_i64, %c16_i64, %c64_i64
 - **syntax:**
 ```mlir
 pto.mad_mx_acc %lhs, %rhs, %dst, %m, %n, %k
+  unit_flag(check_only | check_and_set)?
+  disable_gemv?
+  (sat | nosat)?
+  n_dir?
   : !pto.ptr<A, left>, !pto.ptr<B, right>, !pto.ptr<C, acc>, i64, i64, i64
 ```
-- **semantics:** Accumulating MX cube matmul.
+- **semantics:** Accumulating MX cube matmul, `dst += mx_matmul(lhs, rhs)`.
 
 **Parameter Table:**
 
@@ -162,11 +249,13 @@ pto.mad_mx_acc %lhs, %rhs, %dst, %m, %n, %k
 | `%dst` | ptr | L0C accumulator (`acc`) |
 | `%m` | i64 | M size |
 | `%n` | i64 | N size |
-| `%k` | i64 | K size, typically matching MX tile granularity |
-| `unit_flag_ctrl` | i32 attr | Accumulator control flag |
-| `disable_gemv` | bool attr | GEMV-disable control bit |
+| `%k` | i64 | K size; MX scaling groups values in K-direction chunks of 32 |
+| `unit_flag` | clause | Optional unit-flag producer control; see common clauses |
+| `disable_gemv` | flag | Optional GEMV disable; see common clauses |
+| `sat` / `nosat` | flag | Optional floating exceptional-value mode override; see common clauses |
+| `n_dir` | flag | Optional N-direction producer order; see common clauses |
 
-**Constraints:** same as `pto.mad_mx`.
+**Constraints:** same as `pto.mad_mx`; `sat` / `nosat` is valid because MX is a floating exceptional-value mode.
 
 **Example:**
 
@@ -182,9 +271,16 @@ pto.mad_mx_acc %l0a, %l0b, %l0c, %c16_i64, %c16_i64, %c64_i64
 - **syntax:**
 ```mlir
 pto.mad_mx_bias %lhs, %rhs, %dst, %bias, %m, %n, %k
+  unit_flag(check_only | check_and_set)?
+  disable_gemv?
+  (sat | nosat)?
+  n_dir?
   : !pto.ptr<A, left>, !pto.ptr<B, right>, !pto.ptr<C, acc>, !pto.ptr<C, bias>, i64, i64, i64
 ```
-- **semantics:** Bias-init MX cube matmul.
+- **semantics:** Bias-init MX cube matmul. Like `pto.mad_bias`, the bias is an
+  `N`-element per-output-channel vector in the bias buffer and is broadcast
+  across M:
+  `dst[m, n] = mx_matmul(lhs, rhs)[m, n] + bias[n]`.
 
 **Parameter Table:**
 
@@ -193,14 +289,17 @@ pto.mad_mx_bias %lhs, %rhs, %dst, %bias, %m, %n, %k
 | `%lhs` | ptr | MX L0A input (`left`) |
 | `%rhs` | ptr | MX L0B input (`right`) |
 | `%dst` | ptr | L0C accumulator (`acc`) |
-| `%bias` | ptr | Bias-table pointer (`bias`) |
+| `%bias` | ptr | Bias-buffer pointer (`bias`) for the `N`-element bias vector |
 | `%m` | i64 | M size |
 | `%n` | i64 | N size |
-| `%k` | i64 | K size, typically matching MX tile granularity |
-| `unit_flag_ctrl` | i32 attr | Accumulator control flag |
-| `disable_gemv` | bool attr | GEMV-disable control bit |
+| `%k` | i64 | K size; MX scaling groups values in K-direction chunks of 32 |
+| `unit_flag` | clause | Optional unit-flag producer control; see common clauses |
+| `disable_gemv` | flag | Optional GEMV disable; see common clauses |
+| `sat` / `nosat` | flag | Optional floating exceptional-value mode override; see common clauses |
+| `n_dir` | flag | Optional N-direction producer order; see common clauses |
 
-**Constraints:** same as `pto.mad_mx` plus bias address-space requirement.
+**Constraints:** same as `pto.mad_mx` plus the `pto.mad_bias` bias-buffer/broadcast
+constraints; `sat` / `nosat` is valid because MX is a floating exceptional-value mode.
 
 **Example:**
 
@@ -223,6 +322,10 @@ pto.cube_load %src, %dst, %len_burst
   : !pto.ptr<T, gm>, !pto.ptr<T, mat>, i64, i64, i64, i64
 ```
 - **semantics:** Structured GM-to-L1 (`cbuf`) wrapper.
+  The op copies one or more contiguous byte ranges from GM to L1. Each inner
+  burst copies `%len_burst` bytes. `nburst` repeats that burst, and each
+  optional `loop(...)` wraps the inner transfer pattern in an outer repeated
+  pattern.
 
 **Parameter Table:**
 
@@ -230,18 +333,21 @@ pto.cube_load %src, %dst, %len_burst
 |-----------|-------|-------------|
 | `%src` | ptr | GM source pointer |
 | `%dst` | ptr | L1 destination pointer (`mat`) |
-| `%len_burst` | i64 | Burst length |
-| `nburst(%count, %src_stride, %dst_stride)` | i64 triple | Inner DMA burst count and strides |
-| `loop(%count_i, %src_stride_i, %dst_stride_i)` | i64 triple | Optional outer loop triplet, repeatable |
+| `%len_burst` | i64 | Contiguous transfer length in bytes |
+| `nburst(%count, %src_stride, %dst_stride)` | i64 triple | Inner burst count and source/destination gaps between bursts. The gap is applied after each `%len_burst` byte burst. |
+| `loop(%count_i, %src_stride_i, %dst_stride_i)` | i64 triple | Optional outer loop triplet. Strides are byte offsets applied between repetitions of the enclosed transfer pattern. |
 
 **Constraints:**
 
-- Wrapper lowers to loop/stride setup plus `pto.copy_gm_to_cbuf`.
+- For a contiguous 16-element f16 vector, use `%len_burst = 32`, not `16`.
+- `%count = 1` with zero gaps describes one contiguous copy of `%len_burst`
+  bytes. Increase `%count` for multiple same-sized bursts; use `loop(...)` for
+  higher-dimensional tiling around the inner burst pattern.
 
 **Example:**
 
 ```mlir
-pto.cube_load %a_gm, %l1_a, %c16_i64
+pto.cube_load %bias_gm, %l1_bias, %c32_i64
   nburst(%c1_i64, %c0_i64, %c0_i64)
   : !pto.ptr<f16, gm>, !pto.ptr<f16, mat>, i64, i64, i64, i64
 ```
@@ -257,7 +363,9 @@ pto.cube_store %src, %dst, %len_burst
   [loop(%count_i, %src_stride_i, %dst_stride_i)]*
   : !pto.ptr<T, mat>, !pto.ptr<T, ub>, i64, i64, i64, i64
 ```
-- **semantics:** Structured L1 (`cbuf`) to UB wrapper.
+- **semantics:** Structured L1 (`cbuf`) to UB wrapper. The transfer shape uses
+  the same burst/repeat model as `pto.cube_load`, but the source is L1 and the
+  destination is UB.
 
 **Parameter Table:**
 
@@ -265,13 +373,13 @@ pto.cube_store %src, %dst, %len_burst
 |-----------|-------|-------------|
 | `%src` | ptr | L1 source pointer (`mat`) |
 | `%dst` | ptr | UB destination pointer |
-| `%len_burst` | i64 | Burst length |
-| `nburst(%count, %src_stride, %dst_stride)` | i64 triple | Inner DMA burst count and strides |
-| `loop(%count_i, %src_stride_i, %dst_stride_i)` | i64 triple | Optional outer loop triplet, repeatable |
+| `%len_burst` | i64 | Contiguous transfer length in bytes |
+| `nburst(%count, %src_stride, %dst_stride)` | i64 triple | Inner burst count and source/destination gaps between bursts |
+| `loop(%count_i, %src_stride_i, %dst_stride_i)` | i64 triple | Optional outer loop triplet. Strides are byte offsets between repetitions of the enclosed transfer pattern. |
 
 **Constraints:**
 
-- Wrapper lowers to `pto.copy_cbuf_to_ubuf` and optional outer loops.
+- The source and destination address spaces must match the L1-to-UB dataflow.
 
 **Example:**
 
@@ -291,6 +399,10 @@ pto.cube_load_frac %src, %dst, nd2nz|dn2nz, shape(%n_value, %d_value), src_layou
   : !pto.ptr<T, gm>, !pto.ptr<T, mat>, ...
 ```
 - **semantics:** Structured fractal-load wrapper for `nd2nz` / `dn2nz`.
+  It copies a logical 2-D source region into L1 using the target fractal
+  layout expected by subsequent cube loads. `nd2nz` treats the source as
+  logical N-major rows with D as the inner dimension; `dn2nz` treats the same
+  logical region with D/N interpretation swapped before writing NZ layout.
 
 **Parameter Table:**
 
@@ -299,14 +411,20 @@ pto.cube_load_frac %src, %dst, nd2nz|dn2nz, shape(%n_value, %d_value), src_layou
 | `%src` | ptr | GM source pointer |
 | `%dst` | ptr | L1 destination pointer (`mat`) |
 | `nd2nz` / `dn2nz` | enum token | Fractal load mode |
-| `shape(%n_value, %d_value)` | i64 pair | Logical N and D shape |
-| `src_layout(%src_inner_stride[, %src_outer_stride])` | i64 / i64 pair | Source layout stride fields |
-| `dst_group(%group_count, %dst_loop2_stride, %dst_loop3_stride, %dst_loop4_stride)` | i64 tuple | Destination group count and nested destination strides |
-| `ctrl(%l2_cache_ctrl, %smallc0_en)` | i64, i1 | L2 cache control and small-C0 enable |
+| `shape(%n_value, %d_value)` | i64 pair | Logical N and D shape of the source region being transformed |
+| `src_layout(%src_inner_stride[, %src_outer_stride])` | i64 / i64 pair | Source address strides in bytes. For row-major f16 `[N, D]`, `%src_inner_stride = D * 2`. |
+| `dst_group(%group_count, %dst_loop2_stride, %dst_loop3_stride, %dst_loop4_stride)` | i64 tuple | Destination fractal grouping and nested destination strides in C0-size units. These values organize where generated NZ fractals land in L1; they do not select a separate destination memory block. |
+| `ctrl(%l2_cache_ctrl, %smallc0_en)` | i64, i1 | L2 cache policy hint and small-C0 mode enable |
 
 **Constraints:**
 
-- Lowers to `set_mte2_nz_para` plus `copy_gm_to_cbuf_multi_*`.
+- `src_inner_stride` and `src_outer_stride` are byte strides. Do not pass
+  element counts. For example, a row-major `16 x 16` f16 matrix uses
+  `src_layout(32)`.
+- The destination pointer still selects the base L1 address. Destination
+  grouping/strides are offsets relative to that base.
+- `smallc0_en` is only valid for the target-supported small-C0 cases; the
+  combination is invalid when `d_value > 4`.
 
 **Example:**
 
@@ -329,7 +447,10 @@ pto.bias_load %src, %dst, %len_burst
   nburst(%count, %src_gap, %dst_gap)
   : !pto.ptr<T, mat>, !pto.ptr<U, bias>, i64, i64, i64, i64
 ```
-- **semantics:** Structured helper for L1 (`cbuf`) to bias-table load.
+- **semantics:** Structured helper for L1 (`cbuf`) to bias-buffer load. It
+  prepares the per-output-channel bias vector consumed by `pto.mad_bias` and
+  `pto.mad_mx_bias`. For f16/bf16 sources, the source data in L1 is stored
+  compactly and can be converted to f32 values in the bias buffer.
 
 **Parameter Table:**
 
@@ -337,14 +458,20 @@ pto.bias_load %src, %dst, %len_burst
 |-----------|-------|-------------|
 | `%src` | ptr | L1 source pointer (`mat`) |
 | `%dst` | ptr | Bias destination pointer (`bias`) |
-| `%len_burst` | i64 | Burst length |
+| `%len_burst` | i64 | Source burst length in the bias-load unit. For `f16->f32`, one unit covers 32B of compact f16 source data and produces 16 f32 bias values. |
 | `%count` | i64 | Burst count |
-| `%src_gap` | i64 | Source gap |
-| `%dst_gap` | i64 | Destination gap |
+| `%src_gap` | i64 | Source gap between bursts in the bias-load unit |
+| `%dst_gap` | i64 | Destination gap between bursts in the bias-load unit; must preserve target N0 alignment |
 
 **Constraints:**
 
 - Supported type pairs: `f32->f32`, `i32->i32`, `f16->f32`, `bf16->f32`.
+- For `f16->f32`, each compact f16 source value is converted to f32 before
+  being written to the bias buffer.
+- This op only prepares the bias buffer. The `mad_bias` consumer reads `N`
+  consecutive bias values and broadcasts them across M.
+- The bias buffer contains channel bias values, not an `M x N` result-shaped
+  tile. Load exactly the N-channel bias data needed by the consumer tile.
 
 **Example:**
 
@@ -352,6 +479,9 @@ pto.bias_load %src, %dst, %len_burst
 pto.bias_load %l1_bias, %bt, %c16_i64 nburst(%c1_i64, %c0_i64, %c0_i64)
   : !pto.ptr<f16, mat>, !pto.ptr<f32, bias>, i64, i64, i64, i64
 ```
+
+This example loads one 32B source burst, i.e. 16 compact f16 bias values, and
+materializes 16 f32 bias-buffer values for a `N = 16` `mad_bias`.
 
 ---
 
@@ -378,7 +508,6 @@ pto.fp_load %src, %dst, %len_burst
 
 **Constraints:**
 
-- Lowers to `pto.copy_cbuf_to_fbuf`.
 - `%src` must be in `mat`, `%dst` must be in `scaling`.
 
 **Example:**
@@ -410,7 +539,7 @@ pto.left_load %src, %dst, %m, %k
 
 **Constraints:**
 
-- Lowers to `pto.load_cbuf_to_ca`.
+- `%src` must be in `mat`, `%dst` must be in `left`.
 
 **Example:**
 
@@ -441,7 +570,7 @@ pto.right_load %src, %dst, %k, %n
 
 **Constraints:**
 
-- Lowers to `pto.load_cbuf_to_cb`.
+- `%src` must be in `mat`, `%dst` must be in `right`.
 
 **Example:**
 
@@ -472,7 +601,7 @@ pto.left_load_mx %src, %dst, %m, %k
 
 **Constraints:**
 
-- Lowers to `pto.load_cbuf_to_ca_mx`.
+- `%src` must be in `mat`, `%dst` must be in `left`.
 
 **Example:**
 
@@ -503,7 +632,7 @@ pto.right_load_mx %src, %dst, %k, %n
 
 **Constraints:**
 
-- Lowers to `pto.load_cbuf_to_cb_mx`.
+- `%src` must be in `mat`, `%dst` must be in `right`.
 
 **Example:**
 
@@ -672,10 +801,3 @@ pto.acc_store_ub %src, %dst, %m, %n, %src_stride, %dst_stride, %dual_dst_mode, %
 pto.acc_store_ub %l0c, %ub_out, %c16_i64, %c16_i64, %c16_i64, %c16_i64, %c0_i64, %c0_i64, nz2nd
   : !pto.ptr<f32, acc>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64, i64
 ```
-
----
-
-## Current PTOAS Coverage
-
-- VPTO->LLVM (`--vpto-emit-hivm-llvm`) lowers this chapter's ops to
-  `llvm.hivm.*` intrinsics with cube-related address spaces.

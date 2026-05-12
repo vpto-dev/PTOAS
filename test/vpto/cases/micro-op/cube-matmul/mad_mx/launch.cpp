@@ -40,10 +40,15 @@ struct MrgSortExecutedNumList {
 
 extern "C" __global__ [aicore] void mad_mx_kernel(__gm__ uint8_t *a,
                                                    __gm__ uint8_t *b,
+                                                   __gm__ uint8_t *a_scale,
+                                                   __gm__ uint8_t *b_scale,
                                                    __gm__ float *c);
 
-void LaunchMad_mx_kernel(uint8_t *a, uint8_t *b, float *c, void *stream) {
+void LaunchMad_mx_kernel(uint8_t *a, uint8_t *b, uint8_t *a_scale,
+                         uint8_t *b_scale, float *c, void *stream) {
   mad_mx_kernel<<<1, nullptr, stream>>>((__gm__ uint8_t *)a,
                                         (__gm__ uint8_t *)b,
+                                        (__gm__ uint8_t *)a_scale,
+                                        (__gm__ uint8_t *)b_scale,
                                         (__gm__ float *)c);
 }

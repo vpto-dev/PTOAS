@@ -47,12 +47,13 @@ struct MrgSortExecutedNumList {
     }                                                                            \
   } while (0)
 
-void LaunchMad_f16f16f32_kernel(__fp16 *a, __fp16 *b, float *c, void *stream);
+void LaunchMad_f16f16f32_kernel(__fp16 *a, __fp16 *b, float *cDefault,
+                                float *cDisable, void *stream);
 
 int main() {
-  constexpr size_t kM = 16;
+  constexpr size_t kM = 1;
   constexpr size_t kN = 16;
-  constexpr size_t kK = 16;
+  constexpr size_t kK = 32;
   constexpr size_t aElem = kM * kK;
   constexpr size_t bElem = kK * kN;
   constexpr size_t cElem = kM * kN;
@@ -63,10 +64,12 @@ int main() {
 
   __fp16 *aHost = nullptr;
   __fp16 *bHost = nullptr;
-  float *cHost = nullptr;
+  float *cDefaultHost = nullptr;
+  float *cDisableHost = nullptr;
   __fp16 *aDevice = nullptr;
   __fp16 *bDevice = nullptr;
-  float *cDevice = nullptr;
+  float *cDefaultDevice = nullptr;
+  float *cDisableDevice = nullptr;
 
   int rc = 0;
   bool aclInited = false;
@@ -85,10 +88,12 @@ int main() {
 
   ACL_CHECK(aclrtMallocHost((void **)(&aHost), aSize));
   ACL_CHECK(aclrtMallocHost((void **)(&bHost), bSize));
-  ACL_CHECK(aclrtMallocHost((void **)(&cHost), cSize));
+  ACL_CHECK(aclrtMallocHost((void **)(&cDefaultHost), cSize));
+  ACL_CHECK(aclrtMallocHost((void **)(&cDisableHost), cSize));
   ACL_CHECK(aclrtMalloc((void **)&aDevice, aSize, ACL_MEM_MALLOC_HUGE_FIRST));
   ACL_CHECK(aclrtMalloc((void **)&bDevice, bSize, ACL_MEM_MALLOC_HUGE_FIRST));
-  ACL_CHECK(aclrtMalloc((void **)&cDevice, cSize, ACL_MEM_MALLOC_HUGE_FIRST));
+  ACL_CHECK(aclrtMalloc((void **)&cDefaultDevice, cSize, ACL_MEM_MALLOC_HUGE_FIRST));
+  ACL_CHECK(aclrtMalloc((void **)&cDisableDevice, cSize, ACL_MEM_MALLOC_HUGE_FIRST));
 
   inputSize = aSize;
   FILE_CHECK(ReadFile("./v1.bin", inputSize, aHost, aSize) && inputSize == aSize,
@@ -97,26 +102,34 @@ int main() {
   FILE_CHECK(ReadFile("./v2.bin", inputSize, bHost, bSize) && inputSize == bSize,
              "./v2.bin");
   inputSize = cSize;
-  FILE_CHECK(ReadFile("./v3.bin", inputSize, cHost, cSize) && inputSize == cSize,
+  FILE_CHECK(ReadFile("./v3.bin", inputSize, cDefaultHost, cSize) && inputSize == cSize,
              "./v3.bin");
+  inputSize = cSize;
+  FILE_CHECK(ReadFile("./v4.bin", inputSize, cDisableHost, cSize) && inputSize == cSize,
+             "./v4.bin");
 
   ACL_CHECK(aclrtMemcpy(aDevice, aSize, aHost, aSize, ACL_MEMCPY_HOST_TO_DEVICE));
   ACL_CHECK(aclrtMemcpy(bDevice, bSize, bHost, bSize, ACL_MEMCPY_HOST_TO_DEVICE));
-  ACL_CHECK(aclrtMemcpy(cDevice, cSize, cHost, cSize, ACL_MEMCPY_HOST_TO_DEVICE));
+  ACL_CHECK(aclrtMemcpy(cDefaultDevice, cSize, cDefaultHost, cSize, ACL_MEMCPY_HOST_TO_DEVICE));
+  ACL_CHECK(aclrtMemcpy(cDisableDevice, cSize, cDisableHost, cSize, ACL_MEMCPY_HOST_TO_DEVICE));
 
-  LaunchMad_f16f16f32_kernel(aDevice, bDevice, cDevice, stream);
+  LaunchMad_f16f16f32_kernel(aDevice, bDevice, cDefaultDevice, cDisableDevice, stream);
   ACL_CHECK(aclrtSynchronizeStream(stream));
 
-  ACL_CHECK(aclrtMemcpy(cHost, cSize, cDevice, cSize, ACL_MEMCPY_DEVICE_TO_HOST));
-  FILE_CHECK(WriteFile("./v3.bin", cHost, cSize), "./v3.bin");
+  ACL_CHECK(aclrtMemcpy(cDefaultHost, cSize, cDefaultDevice, cSize, ACL_MEMCPY_DEVICE_TO_HOST));
+  ACL_CHECK(aclrtMemcpy(cDisableHost, cSize, cDisableDevice, cSize, ACL_MEMCPY_DEVICE_TO_HOST));
+  FILE_CHECK(WriteFile("./v3.bin", cDefaultHost, cSize), "./v3.bin");
+  FILE_CHECK(WriteFile("./v4.bin", cDisableHost, cSize), "./v4.bin");
 
 cleanup:
   aclrtFree(aDevice);
   aclrtFree(bDevice);
-  aclrtFree(cDevice);
+  aclrtFree(cDefaultDevice);
+  aclrtFree(cDisableDevice);
   aclrtFreeHost(aHost);
   aclrtFreeHost(bHost);
-  aclrtFreeHost(cHost);
+  aclrtFreeHost(cDefaultHost);
+  aclrtFreeHost(cDisableHost);
   if (stream != nullptr)
     aclrtDestroyStream(stream);
   if (deviceSet)

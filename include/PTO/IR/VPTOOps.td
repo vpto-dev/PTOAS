@@ -19,6 +19,7 @@
 
 include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "PTO/IR/VPTOInterfaces.td"
 
 def PTO_VectorType : Type<CPred<"::llvm::isa<::mlir::pto::VRegType>($_self)">,
                            "PTO low-level vector type">;
@@ -1151,6 +1152,10 @@ def PTO_VnotOp : PTO_UnaryVecOp<"vnot">;
 def PTO_VcaddOp : PTO_UnaryVecOp<"vcadd">;
 
 def PTO_MadOp : PTO_Op<"mad", [
+    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface, [
+      "isMadMxFamily", "hasBiasOperand", "readsAccumulator",
+      "supportsTf32Mode", "getBiasOrNull"
+    ]>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -1160,19 +1165,23 @@ def PTO_MadOp : PTO_Op<"mad", [
     I64:$m,
     I64:$n,
     I64:$k,
-    DefaultValuedAttr<I32Attr, "0">:$unit_flag_ctrl,
-    DefaultValuedAttr<BoolAttr, "true">:$disable_gemv
+    OptionalAttr<PTO_MadUnitFlagModeAttr>:$unit_flag_mode,
+    UnitAttr:$disable_gemv,
+    OptionalAttr<PTO_MadSatModeAttr>:$sat_mode,
+    OptionalAttr<PTO_Tf32ModeAttr>:$tf32_mode,
+    UnitAttr:$n_dir
   );
   let results = (outs);
 
   let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $lhs `,` $rhs `,` $dst `,` $m `,` $n `,` $k attr-dict `:` type($lhs) `,` type($rhs) `,` type($dst) `,` type($m) `,` type($n) `,` type($k)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_MadAccOp : PTO_Op<"mad_acc", [
+    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface, [
+      "isMadMxFamily", "hasBiasOperand", "readsAccumulator",
+      "supportsTf32Mode", "getBiasOrNull"
+    ]>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -1182,19 +1191,23 @@ def PTO_MadAccOp : PTO_Op<"mad_acc", [
     I64:$m,
     I64:$n,
     I64:$k,
-    DefaultValuedAttr<I32Attr, "0">:$unit_flag_ctrl,
-    DefaultValuedAttr<BoolAttr, "true">:$disable_gemv
+    OptionalAttr<PTO_MadUnitFlagModeAttr>:$unit_flag_mode,
+    UnitAttr:$disable_gemv,
+    OptionalAttr<PTO_MadSatModeAttr>:$sat_mode,
+    OptionalAttr<PTO_Tf32ModeAttr>:$tf32_mode,
+    UnitAttr:$n_dir
   );
   let results = (outs);
 
   let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $lhs `,` $rhs `,` $dst `,` $m `,` $n `,` $k attr-dict `:` type($lhs) `,` type($rhs) `,` type($dst) `,` type($m) `,` type($n) `,` type($k)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_MadBiasOp : PTO_Op<"mad_bias", [
+    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface, [
+      "isMadMxFamily", "hasBiasOperand", "readsAccumulator",
+      "supportsTf32Mode", "getBiasOrNull"
+    ]>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -1205,19 +1218,23 @@ def PTO_MadBiasOp : PTO_Op<"mad_bias", [
     I64:$m,
     I64:$n,
     I64:$k,
-    DefaultValuedAttr<I32Attr, "0">:$unit_flag_ctrl,
-    DefaultValuedAttr<BoolAttr, "true">:$disable_gemv
+    OptionalAttr<PTO_MadUnitFlagModeAttr>:$unit_flag_mode,
+    UnitAttr:$disable_gemv,
+    OptionalAttr<PTO_MadSatModeAttr>:$sat_mode,
+    OptionalAttr<PTO_Tf32ModeAttr>:$tf32_mode,
+    UnitAttr:$n_dir
   );
   let results = (outs);
 
   let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $lhs `,` $rhs `,` $dst `,` $bias `,` $m `,` $n `,` $k attr-dict `:` type($lhs) `,` type($rhs) `,` type($dst) `,` type($bias) `,` type($m) `,` type($n) `,` type($k)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_MadMxOp : PTO_Op<"mad_mx", [
+    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface, [
+      "isMadMxFamily", "hasBiasOperand", "readsAccumulator",
+      "supportsTf32Mode", "getBiasOrNull", "getTf32ModeAttr"
+    ]>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -1227,19 +1244,22 @@ def PTO_MadMxOp : PTO_Op<"mad_mx", [
     I64:$m,
     I64:$n,
     I64:$k,
-    DefaultValuedAttr<I32Attr, "0">:$unit_flag_ctrl,
-    DefaultValuedAttr<BoolAttr, "true">:$disable_gemv
+    OptionalAttr<PTO_MadUnitFlagModeAttr>:$unit_flag_mode,
+    UnitAttr:$disable_gemv,
+    OptionalAttr<PTO_MadSatModeAttr>:$sat_mode,
+    UnitAttr:$n_dir
   );
   let results = (outs);
 
   let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $lhs `,` $rhs `,` $dst `,` $m `,` $n `,` $k attr-dict `:` type($lhs) `,` type($rhs) `,` type($dst) `,` type($m) `,` type($n) `,` type($k)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_MadMxAccOp : PTO_Op<"mad_mx_acc", [
+    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface, [
+      "isMadMxFamily", "hasBiasOperand", "readsAccumulator",
+      "supportsTf32Mode", "getBiasOrNull", "getTf32ModeAttr"
+    ]>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -1249,19 +1269,22 @@ def PTO_MadMxAccOp : PTO_Op<"mad_mx_acc", [
     I64:$m,
     I64:$n,
     I64:$k,
-    DefaultValuedAttr<I32Attr, "0">:$unit_flag_ctrl,
-    DefaultValuedAttr<BoolAttr, "true">:$disable_gemv
+    OptionalAttr<PTO_MadUnitFlagModeAttr>:$unit_flag_mode,
+    UnitAttr:$disable_gemv,
+    OptionalAttr<PTO_MadSatModeAttr>:$sat_mode,
+    UnitAttr:$n_dir
   );
   let results = (outs);
 
   let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $lhs `,` $rhs `,` $dst `,` $m `,` $n `,` $k attr-dict `:` type($lhs) `,` type($rhs) `,` type($dst) `,` type($m) `,` type($n) `,` type($k)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_MadMxBiasOp : PTO_Op<"mad_mx_bias", [
+    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface, [
+      "isMadMxFamily", "hasBiasOperand", "readsAccumulator",
+      "supportsTf32Mode", "getBiasOrNull", "getTf32ModeAttr"
+    ]>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -1272,15 +1295,100 @@ def PTO_MadMxBiasOp : PTO_Op<"mad_mx_bias", [
     I64:$m,
     I64:$n,
     I64:$k,
-    DefaultValuedAttr<I32Attr, "0">:$unit_flag_ctrl,
-    DefaultValuedAttr<BoolAttr, "true">:$disable_gemv
+    OptionalAttr<PTO_MadUnitFlagModeAttr>:$unit_flag_mode,
+    UnitAttr:$disable_gemv,
+    OptionalAttr<PTO_MadSatModeAttr>:$sat_mode,
+    UnitAttr:$n_dir
+  );
+  let results = (outs);
+
+  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
+}
+
+def PTO_MadRawOp : PTO_Op<"mad_raw", [
+    DeclareOpInterfaceMethods<PTO_MadRawOpInterface, [
+      "isMadMxFamily", "hasBiasOperand", "getBiasOrNull"
+    ]>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_BufferType:$lhs,
+    PTO_BufferType:$rhs,
+    PTO_BufferType:$dst,
+    I64:$xt
   );
   let results = (outs);
 
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    $lhs `,` $rhs `,` $dst `,` $bias `,` $m `,` $n `,` $k attr-dict `:` type($lhs) `,` type($rhs) `,` type($dst) `,` type($bias) `,` type($m) `,` type($n) `,` type($k)
+    $lhs `,` $rhs `,` $dst `,` $xt attr-dict `:` type($lhs) `,` type($rhs) `,` type($dst) `,` type($xt)
+  }];
+}
+
+def PTO_MadBiasRawOp : PTO_Op<"mad_bias_raw", [
+    DeclareOpInterfaceMethods<PTO_MadRawOpInterface, [
+      "isMadMxFamily", "hasBiasOperand", "getBiasOrNull"
+    ]>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_BufferType:$lhs,
+    PTO_BufferType:$rhs,
+    PTO_BufferType:$dst,
+    PTO_BufferType:$bias,
+    I64:$xt
+  );
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $lhs `,` $rhs `,` $dst `,` $bias `,` $xt attr-dict `:` type($lhs) `,` type($rhs) `,` type($dst) `,` type($bias) `,` type($xt)
+  }];
+}
+
+def PTO_MadMxRawOp : PTO_Op<"mad_mx_raw", [
+    DeclareOpInterfaceMethods<PTO_MadRawOpInterface, [
+      "isMadMxFamily", "hasBiasOperand", "getBiasOrNull"
+    ]>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_BufferType:$lhs,
+    PTO_BufferType:$rhs,
+    PTO_BufferType:$dst,
+    I64:$xt
+  );
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $lhs `,` $rhs `,` $dst `,` $xt attr-dict `:` type($lhs) `,` type($rhs) `,` type($dst) `,` type($xt)
+  }];
+}
+
+def PTO_MadMxBiasRawOp : PTO_Op<"mad_mx_bias_raw", [
+    DeclareOpInterfaceMethods<PTO_MadRawOpInterface, [
+      "isMadMxFamily", "hasBiasOperand", "getBiasOrNull"
+    ]>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_BufferType:$lhs,
+    PTO_BufferType:$rhs,
+    PTO_BufferType:$dst,
+    PTO_BufferType:$bias,
+    I64:$xt
+  );
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $lhs `,` $rhs `,` $dst `,` $bias `,` $xt attr-dict `:` type($lhs) `,` type($rhs) `,` type($dst) `,` type($bias) `,` type($xt)
   }];
 }
 

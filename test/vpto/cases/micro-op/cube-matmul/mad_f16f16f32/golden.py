@@ -12,22 +12,29 @@ import argparse
 from pathlib import Path
 import numpy as np
 
-M = 16
+M = 1
 N = 16
-K = 16
+K = 32
 
 
 def generate(output_dir: Path) -> None:
-    a = np.zeros((M, K), dtype=np.float16)
-    b = np.zeros((K, N), dtype=np.float16)
-    c = np.zeros((M, N), dtype=np.float32)
-    golden_c = np.zeros((M, N), dtype=np.float32)
+    row = np.arange(M, dtype=np.float32).reshape(M, 1)
+    col = np.arange(K, dtype=np.float32).reshape(1, K)
+    a = (((row * 3 + col * 5) % 17) - 8).astype(np.float16) / np.float16(4.0)
+    k_idx = np.arange(K, dtype=np.float32).reshape(K, 1)
+    n_idx = np.arange(N, dtype=np.float32).reshape(1, N)
+    b = (((k_idx * 7 - n_idx * 2) % 19) - 9).astype(np.float16) / np.float16(5.0)
+    c_default = np.zeros((M, N), dtype=np.float32)
+    c_disable = np.zeros((M, N), dtype=np.float32)
+    golden = a.astype(np.float32) @ b.astype(np.float32)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     a.reshape(-1).tofile(output_dir / "v1.bin")
     b.reshape(-1).tofile(output_dir / "v2.bin")
-    c.reshape(-1).tofile(output_dir / "v3.bin")
-    golden_c.reshape(-1).tofile(output_dir / "golden_v3.bin")
+    c_default.reshape(-1).tofile(output_dir / "v3.bin")
+    c_disable.reshape(-1).tofile(output_dir / "v4.bin")
+    golden.reshape(-1).tofile(output_dir / "golden_v3.bin")
+    golden.reshape(-1).tofile(output_dir / "golden_v4.bin")
 
 
 def main() -> None:

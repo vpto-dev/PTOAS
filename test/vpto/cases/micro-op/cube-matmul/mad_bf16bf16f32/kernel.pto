@@ -13,27 +13,39 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %c0_i64 = arith.constant 0 : i64
     %c1_i64 = arith.constant 1 : i64
     %c16_i64 = arith.constant 16 : i64
-    %c68720525568_i64 = arith.constant 68720525568 : i64
+    %c32_i64 = arith.constant 32 : i64
+    %c512_i64 = arith.constant 512 : i64
+    %false = arith.constant false
 
     %l1_a = pto.castptr %c0_i64 : i64 -> !pto.ptr<bf16, mat>
-    %l1_b = pto.castptr %c0_i64 : i64 -> !pto.ptr<bf16, mat>
+    %l1_b = pto.castptr %c512_i64 : i64 -> !pto.ptr<bf16, mat>
     %l0a = pto.castptr %c0_i64 : i64 -> !pto.ptr<bf16, left>
     %l0b = pto.castptr %c0_i64 : i64 -> !pto.ptr<bf16, right>
     %l0c = pto.castptr %c0_i64 : i64 -> !pto.ptr<f32, acc>
 
-    pto.cube_load %a_gm, %l1_a, %c16_i64
-      nburst(%c1_i64, %c0_i64, %c0_i64)
-      : !pto.ptr<bf16, gm>, !pto.ptr<bf16, mat>, i64, i64, i64, i64
-    pto.cube_load %b_gm, %l1_b, %c16_i64
-      nburst(%c1_i64, %c0_i64, %c0_i64)
-      : !pto.ptr<bf16, gm>, !pto.ptr<bf16, mat>, i64, i64, i64, i64
+    pto.cube_load_frac %a_gm, %l1_a, nd2nz,
+        shape(%c16_i64, %c16_i64),
+        src_layout(%c32_i64),
+        dst_group(%c1_i64, %c1_i64, %c16_i64, %c0_i64),
+        ctrl(%c0_i64, %false)
+      : !pto.ptr<bf16, gm>, !pto.ptr<bf16, mat>, nd2nz,
+        shape i64, i64, src_layout(i64),
+        dst_group i64, i64, i64, i64, ctrl i64, i1
+    pto.cube_load_frac %b_gm, %l1_b, nd2nz,
+        shape(%c16_i64, %c16_i64),
+        src_layout(%c32_i64),
+        dst_group(%c1_i64, %c1_i64, %c16_i64, %c0_i64),
+        ctrl(%c0_i64, %false)
+      : !pto.ptr<bf16, gm>, !pto.ptr<bf16, mat>, nd2nz,
+        shape i64, i64, src_layout(i64),
+        dst_group i64, i64, i64, i64, ctrl i64, i1
 
     pto.set_flag["PIPE_MTE2", "PIPE_MTE1", "EVENT_ID0"]
     pto.wait_flag["PIPE_MTE2", "PIPE_MTE1", "EVENT_ID0"]
 
     pto.left_load %l1_a, %l0a, %c16_i64, %c16_i64
       : !pto.ptr<bf16, mat>, !pto.ptr<bf16, left>, i64, i64
-    pto.right_load %l1_b, %l0b, %c16_i64, %c16_i64
+    pto.right_load %l1_b, %l0b, %c16_i64, %c16_i64 {transpose = true}
       : !pto.ptr<bf16, mat>, !pto.ptr<bf16, right>, i64, i64
     pto.set_flag["PIPE_MTE1", "PIPE_M", "EVENT_ID0"]
     pto.wait_flag["PIPE_MTE1", "PIPE_M", "EVENT_ID0"]

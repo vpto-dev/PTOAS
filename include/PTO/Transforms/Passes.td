@@ -487,7 +487,7 @@ def PTOInferVPTOVecScope
       "Infer missing pto.vecscope regions for VPTO vector operation clusters";
   let description = [{
     Runs near the VPTO emission boundary after inlining, canonicalization,
-    CSE, pointer normalization, and bridge-op expansion have exposed the final
+    CSE, pointer normalization, and wrapper-op expansion have exposed the final
     SSA shape. The pass greedily clusters contiguous VPTO vector operations
     into `pto.vecscope` regions while preserving explicit vector-scope carriers
     and treating DMA/copy/sync, unresolved calls, terminators, and forbidden
@@ -529,7 +529,7 @@ def PTOValidateVPTOEmissionIR
     Runs the emission-stage VPTO legality verifier on ptr-form VPTO IR after
     `PTOVPTOPtrBoundary`. This stage re-checks the shared authoring contracts
     and confirms the final emission surface no longer carries memref boundary
-    state or residual bridge scaffold.
+    state or residual wrapper scaffold.
   }];
   let constructor = "mlir::pto::createPTOValidateVPTOEmissionIRPass()";
   let dependentDialects = ["mlir::func::FuncDialect",
@@ -538,17 +538,16 @@ def PTOValidateVPTOEmissionIR
                            "mlir::scf::SCFDialect"];
 }
 
-def PTOVPTOExpandBridgeOps
-    : Pass<"pto-vpto-expand-bridge-ops", "func::FuncOp"> {
+def VPTOExpandWrapperOps
+    : Pass<"vpto-expand-wrapper-ops", "func::FuncOp"> {
   let summary =
-      "Expand temporary VPTO bridge ops back to emission-ready VPTO IR";
+      "Expand VPTO wrapper ops to emission-ready low-level VPTO IR";
   let description = [{
-    Low-level fusion may keep temporary bridge ops in VPTO IR so legality and
-    alias analysis can still see memref-form operands. This pass expands those
-    bridge ops back to the existing emission-ready pointer-level VPTO forms
-    before backend emission.
+    Expand higher-level VPTO wrapper operations, including bridge, DMA, cube,
+    accumulator-store, and MAD semantic forms, to the low-level pointer/raw VPTO
+    operations consumed by backend emission.
   }];
-  let constructor = "mlir::pto::createPTOVPTOExpandBridgeOpsPass()";
+  let constructor = "mlir::pto::createVPTOExpandWrapperOpsPass()";
   let dependentDialects = ["mlir::func::FuncDialect",
                            "mlir::arith::ArithDialect",
                            "mlir::memref::MemRefDialect",

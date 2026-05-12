@@ -40,10 +40,13 @@ struct MrgSortExecutedNumList {
 
 extern "C" __global__ [aicore] void mad_f16f16f32_kernel(__gm__ __fp16 *a,
                                                 __gm__ __fp16 *b,
-                                                __gm__ float *c);
+                                                __gm__ float *c_default,
+                                                __gm__ float *c_disable);
 
-void LaunchMad_f16f16f32_kernel(__fp16 *a, __fp16 *b, float *c, void *stream) {
+void LaunchMad_f16f16f32_kernel(__fp16 *a, __fp16 *b, float *cDefault,
+                                float *cDisable, void *stream) {
   mad_f16f16f32_kernel<<<1, nullptr, stream>>>((__gm__ __fp16 *)a,
                                      (__gm__ __fp16 *)b,
-                                     (__gm__ float *)c);
+                                     (__gm__ float *)cDefault,
+                                     (__gm__ float *)cDisable);
 }

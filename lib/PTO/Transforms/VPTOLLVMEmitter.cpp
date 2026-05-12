@@ -9,6 +9,7 @@
 #include "PTO/Transforms/VPTOLLVMEmitter.h"
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/IR/PTOSyncUtils.h"
 
 #include "mlir/Conversion/Passes.h"
@@ -242,6 +243,11 @@ static std::string getMadRhsFragment(Type type) {
   return {};
 }
 
+static bool isMadE4M3ElementType(Type type) {
+  return type.isFloat8E4M3() || type.isFloat8E4M3FN() ||
+         type.isFloat8E4M3FNUZ() || type.isFloat8E4M3B11FNUZ();
+}
+
 static std::string getMadDstFragment(Type type) {
   if (type.isF16())
     return "f16";
@@ -269,6 +275,12 @@ static FailureOr<StringRef> buildMadTypedCalleeName(MLIRContext *context,
     return StringAttr::get(context, "llvm.hivm.MAD.bf162f32.c310").getValue();
   if (lhsElem.isF32() && rhs == "f32" && dst == "f32")
     return StringAttr::get(context, "llvm.hivm.MAD.f322f32.c310").getValue();
+  if (isMadE4M3ElementType(lhsElem) && isMadE4M3ElementType(rhsElem) &&
+      dst == "f32")
+    return StringAttr::get(context, "llvm.hivm.MAD.e4m3e4m3.c310").getValue();
+  if (pto::isPTOHiFloat8Type(lhsElem) && pto::isPTOHiFloat8Type(rhsElem) &&
+      dst == "f32")
+    return StringAttr::get(context, "llvm.hivm.MAD.e4m3e4m3.c310").getValue();
   if (lhsElem.isF16() && rhs == "s4")
     return StringAttr::get(context, "llvm.hivm.MAD.f16s4.c310").getValue();
   if (lhsElem.isF16() && rhs == "s8")
@@ -321,6 +333,24 @@ static std::string getElementTypeFragment(Type type) {
     return "f32";
   if (auto intType = dyn_cast<IntegerType>(type))
     return (intType.isUnsigned() ? "u" : "s") + std::to_string(intType.getWidth());
+  return {};
+}
+
+static std::string getL0LoadElementFragment(Type type) {
+  std::string elem = getElementTypeFragment(type);
+  if (!elem.empty())
+    return elem;
+
+  std::string typeText;
+  llvm::raw_string_ostream os(typeText);
+  type.print(os);
+  os.flush();
+  std::string lower = StringRef(typeText).lower();
+  if (StringRef(lower).contains("e4m3") ||
+      StringRef(lower).contains("e5m2") ||
+      StringRef(lower).contains("e8m0") ||
+      StringRef(lower).contains("hif8"))
+    return "s8";
   return {};
 }
 
@@ -1582,41 +1612,6 @@ packLoadCbufToCbConfig1(Operation *anchor, Value srcStride, Value dstStride) {
       .getResult();
 }
 
-static FailureOr<Value> packMadConfig(Operation *anchor, Value m, Value n,
-                                      Value k, uint32_t unitFlagCtrl,
-                                      bool disableGemv, bool cmatrixSource,
-                                      bool cmatrixInit) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value mI64 = castIntegerLikeTo(anchor, m, builder.getI64Type());
-  Value nI64 = castIntegerLikeTo(anchor, n, builder.getI64Type());
-  Value kI64 = castIntegerLikeTo(anchor, k, builder.getI64Type());
-  if (!mI64 || !nI64 || !kI64)
-    return failure();
-
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value config = mI64;
-  config = bitOr(config, shl(kI64, 12));
-  config = bitOr(config, shl(nI64, 24));
-  config = bitOr(config, shl(getI64Constant(builder, loc, unitFlagCtrl), 55));
-  if (disableGemv)
-    config = bitOr(config, shl(getI64Constant(builder, loc, 1), 61));
-  if (cmatrixSource)
-    config = bitOr(config, shl(getI64Constant(builder, loc, 1), 62));
-  if (cmatrixInit)
-    config = bitOr(config, shl(getI64Constant(builder, loc, 1), 63));
-  return config;
-}
-
 static Value buildMadBiasDestination(Operation *anchor,
                                      ConversionPatternRewriter &rewriter,
                                      Value dst, Value bias) {
@@ -2040,28 +2035,21 @@ static StringRef buildCopyUbToCbufCallee(MLIRContext *context) {
   return StringAttr::get(context, "llvm.hivm.MOV.UB.TO.L1.v310").getValue();
 }
 
-template <typename MadLikeOp>
-static FailureOr<StringRef> buildMadCallee(MLIRContext *context, MadLikeOp op) {
+static FailureOr<StringRef> buildOrdinaryMadCallee(MLIRContext *context,
+                                                   pto::MadRawOpInterface op) {
   auto lhsType = dyn_cast<pto::PtrType>(op.getLhs().getType());
   auto rhsType = dyn_cast<pto::PtrType>(op.getRhs().getType());
   auto dstType = dyn_cast<pto::PtrType>(op.getDst().getType());
   if (!lhsType || !rhsType || !dstType)
     return failure();
 
-  Type lhsElem = lhsType.getElementType();
-  Type rhsElem = rhsType.getElementType();
-  Type dstElem = dstType.getElementType();
-  if (auto typed = buildMadTypedCalleeName(context, lhsElem, rhsElem, dstElem);
-      succeeded(typed))
-    return typed;
-  if (isMxElementType(lhsElem) && isMxElementType(rhsElem))
-    return buildMadMxCalleeName(context, lhsElem, rhsElem);
-  return failure();
+  return buildMadTypedCalleeName(context, lhsType.getElementType(),
+                                 rhsType.getElementType(),
+                                 dstType.getElementType());
 }
 
-template <typename MadMxLikeOp>
-static FailureOr<StringRef> buildMadMxCallee(MLIRContext *context,
-                                             MadMxLikeOp op) {
+static FailureOr<StringRef> buildMxMadCallee(MLIRContext *context,
+                                             pto::MadRawOpInterface op) {
   auto lhsType = dyn_cast<pto::PtrType>(op.getLhs().getType());
   auto rhsType = dyn_cast<pto::PtrType>(op.getRhs().getType());
   if (!lhsType || !rhsType)
@@ -2153,7 +2141,7 @@ static FailureOr<StringRef> buildLoadCbufToCaCallee(MLIRContext *context,
   auto ptrType = dyn_cast<pto::PtrType>(sourceType);
   if (!ptrType)
     return failure();
-  std::string elem = getElementTypeFragment(ptrType.getElementType());
+  std::string elem = getL0LoadElementFragment(ptrType.getElementType());
   if (elem.empty())
     return failure();
   return StringAttr::get(context, "llvm.hivm.LOAD.L1.TO.L0A.2Dv2." + elem)
@@ -2170,7 +2158,7 @@ static FailureOr<StringRef> buildLoadCbufToCbCallee(MLIRContext *context,
   auto ptrType = dyn_cast<pto::PtrType>(sourceType);
   if (!ptrType)
     return failure();
-  std::string elem = getElementTypeFragment(ptrType.getElementType());
+  std::string elem = getL0LoadElementFragment(ptrType.getElementType());
   if (elem.empty())
     return failure();
   return StringAttr::get(context, "llvm.hivm.LOAD.L1.TO.L0B.2Dv2." + elem)
@@ -3484,284 +3472,85 @@ private:
   LoweringState &state;
 };
 
-class LowerMadOpPattern final
-    : public OpConversionPattern<pto::MadOp> {
-public:
-  explicit LowerMadOpPattern(TypeConverter &typeConverter,
-                                  MLIRContext *context, LoweringState &state)
-      : OpConversionPattern<pto::MadOp>(typeConverter, context),
-        state(state) {}
+static LogicalResult lowerMadRawOp(pto::MadRawOpInterface op,
+                                   ValueRange convertedOperands,
+                                   ConversionPatternRewriter &rewriter,
+                                   LoweringState &state) {
+  Value lhsRaw = convertedOperands[0];
+  Value rhsRaw = convertedOperands[1];
+  Value dstRaw = convertedOperands[2];
+  Value biasRaw = op.hasBiasOperand() ? convertedOperands[3] : Value();
+  Value xt = convertedOperands[op.hasBiasOperand() ? 4 : 3];
+  if (!lhsRaw || !rhsRaw || !dstRaw || !xt ||
+      (op.hasBiasOperand() && !biasRaw))
+    return rewriter.notifyMatchFailure(op, "expected converted mad raw operands");
 
-  LogicalResult
-  matchAndRewrite(pto::MadOp op, pto::MadOp::Adaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Value lhsRaw = adaptor.getLhs();
-    Value rhsRaw = adaptor.getRhs();
-    Value dstRaw = adaptor.getDst();
-    Value m = adaptor.getM();
-    Value n = adaptor.getN();
-    Value k = adaptor.getK();
-    if (!lhsRaw || !rhsRaw || !dstRaw || !m || !n || !k)
-      return rewriter.notifyMatchFailure(op, "expected converted mad operands");
-
-    if (!isa<LLVM::LLVMPointerType>(lhsRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(rhsRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(dstRaw.getType())) {
-      return rewriter.notifyMatchFailure(op,
-                                         "expected LLVM pointer lhs/rhs/dst");
-    }
-
-    Type i64Ty = rewriter.getI64Type();
-
-    constexpr unsigned caAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::LEFT);
-    constexpr unsigned cbAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::RIGHT);
-    constexpr unsigned ccAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::ACC);
-    FailureOr<Value> lhs = reinterpretPointerToAddrSpace(op, lhsRaw, caAddressSpace);
-    FailureOr<Value> rhs = reinterpretPointerToAddrSpace(op, rhsRaw, cbAddressSpace);
-    FailureOr<Value> dst = reinterpretPointerToAddrSpace(op, dstRaw, ccAddressSpace);
-    if (failed(lhs) || failed(rhs) || failed(dst))
-      return rewriter.notifyMatchFailure(op, "failed to map cube pointer spaces");
-
-    FailureOr<StringRef> calleeName = buildMadCallee(op.getContext(), op);
-    if (failed(calleeName)) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported mad element types for mad/mad_mx dispatch");
-    }
-    FailureOr<Value> config =
-        packMadConfig(op, m, n, k, op.getUnitFlagCtrl(), op.getDisableGemv(),
-                      /*cmatrixSource=*/false, /*cmatrixInit=*/true);
-    if (failed(config))
-      return rewriter.notifyMatchFailure(op, "failed to pack mad config");
-
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{dst->getType(), lhs->getType(), rhs->getType(), i64Ty},
-        TypeRange{});
-    auto call =
-        rewriter.create<func::CallOp>(op.getLoc(), *calleeName, TypeRange{},
-                                      ValueRange{*dst, *lhs, *rhs, *config});
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    rewriter.eraseOp(op);
-    (void)call;
-    return success();
+  if (!isa<LLVM::LLVMPointerType>(lhsRaw.getType()) ||
+      !isa<LLVM::LLVMPointerType>(rhsRaw.getType()) ||
+      !isa<LLVM::LLVMPointerType>(dstRaw.getType()) ||
+      (biasRaw && !isa<LLVM::LLVMPointerType>(biasRaw.getType()))) {
+    return rewriter.notifyMatchFailure(
+        op, "expected LLVM pointer lhs/rhs/dst/bias operands");
   }
 
-private:
-  LoweringState &state;
-};
-
-template <typename MadAccLikeOp>
-class LowerMadAccLikePattern final : public OpConversionPattern<MadAccLikeOp> {
-public:
-  explicit LowerMadAccLikePattern(TypeConverter &typeConverter,
-                                  MLIRContext *context, LoweringState &state)
-      : OpConversionPattern<MadAccLikeOp>(typeConverter, context), state(state) {}
-
-  LogicalResult
-  matchAndRewrite(MadAccLikeOp op, typename MadAccLikeOp::Adaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Value lhsRaw = adaptor.getLhs();
-    Value rhsRaw = adaptor.getRhs();
-    Value dstRaw = adaptor.getDst();
-    Value m = adaptor.getM();
-    Value n = adaptor.getN();
-    Value k = adaptor.getK();
-    if (!lhsRaw || !rhsRaw || !dstRaw || !m || !n || !k)
-      return rewriter.notifyMatchFailure(op, "expected converted mad operands");
-
-    if (!isa<LLVM::LLVMPointerType>(lhsRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(rhsRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(dstRaw.getType())) {
-      return rewriter.notifyMatchFailure(op,
-                                         "expected LLVM pointer lhs/rhs/dst");
-    }
-
-    Type i64Ty = rewriter.getI64Type();
-    constexpr unsigned caAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::LEFT);
-    constexpr unsigned cbAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::RIGHT);
-    constexpr unsigned ccAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::ACC);
-    FailureOr<Value> lhs =
-        reinterpretPointerToAddrSpace(op, lhsRaw, caAddressSpace);
-    FailureOr<Value> rhs =
-        reinterpretPointerToAddrSpace(op, rhsRaw, cbAddressSpace);
-    FailureOr<Value> dst =
-        reinterpretPointerToAddrSpace(op, dstRaw, ccAddressSpace);
-    if (failed(lhs) || failed(rhs) || failed(dst))
-      return rewriter.notifyMatchFailure(op, "failed to map cube pointer spaces");
-
-    FailureOr<StringRef> calleeName = buildMadCallee(op.getContext(), op);
-    if (failed(calleeName)) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported mad element types for mad dispatch");
-    }
-
-    FailureOr<Value> config =
-        packMadConfig(op, m, n, k, op.getUnitFlagCtrl(), op.getDisableGemv(),
-                      /*cmatrixSource=*/false, /*cmatrixInit=*/false);
-    if (failed(config))
-      return rewriter.notifyMatchFailure(op, "failed to pack mad config");
-
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{dst->getType(), lhs->getType(), rhs->getType(), i64Ty},
-        TypeRange{});
-    rewriter.create<func::CallOp>(op.getLoc(), *calleeName, TypeRange{},
-                                  ValueRange{*dst, *lhs, *rhs, *config});
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    rewriter.eraseOp(op);
-    return success();
+  Type i64Ty = rewriter.getI64Type();
+  constexpr unsigned caAddressSpace =
+      static_cast<unsigned>(pto::AddressSpace::LEFT);
+  constexpr unsigned cbAddressSpace =
+      static_cast<unsigned>(pto::AddressSpace::RIGHT);
+  constexpr unsigned ccAddressSpace =
+      static_cast<unsigned>(pto::AddressSpace::ACC);
+  constexpr unsigned btAddressSpace =
+      static_cast<unsigned>(pto::AddressSpace::BIAS);
+  FailureOr<Value> lhs =
+      reinterpretPointerToAddrSpace(op, lhsRaw, caAddressSpace);
+  FailureOr<Value> rhs =
+      reinterpretPointerToAddrSpace(op, rhsRaw, cbAddressSpace);
+  FailureOr<Value> dst =
+      reinterpretPointerToAddrSpace(op, dstRaw, ccAddressSpace);
+  FailureOr<Value> bias;
+  if (biasRaw)
+    bias = reinterpretPointerToAddrSpace(op, biasRaw, btAddressSpace);
+  if (failed(lhs) || failed(rhs) || failed(dst) ||
+      (biasRaw && failed(bias))) {
+    return rewriter.notifyMatchFailure(op, "failed to map cube pointer spaces");
   }
 
-private:
-  LoweringState &state;
-};
+  FailureOr<StringRef> calleeName =
+      op.isMadMxFamily() ? buildMxMadCallee(op.getContext(), op)
+                         : buildOrdinaryMadCallee(op.getContext(), op);
+  if (failed(calleeName))
+    return rewriter.notifyMatchFailure(
+        op, "unsupported mad element types for raw dispatch");
 
-template <typename MadBiasLikeOp>
-class LowerMadBiasLikePattern final : public OpConversionPattern<MadBiasLikeOp> {
+  Value callDst = *dst;
+  if (biasRaw)
+    callDst = buildMadBiasDestination(op, rewriter, *dst, *bias);
+  auto funcType = rewriter.getFunctionType(
+      TypeRange{dst->getType(), lhs->getType(), rhs->getType(), i64Ty},
+      TypeRange{});
+  auto call = rewriter.create<func::CallOp>(
+      op->getLoc(), *calleeName, TypeRange{},
+      ValueRange{callDst, *lhs, *rhs, xt});
+  state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
+  rewriter.replaceOp(op, call.getResults());
+  return success();
+}
+
+template <typename RawOp>
+class LowerMadRawPattern final : public OpConversionPattern<RawOp> {
 public:
-  explicit LowerMadBiasLikePattern(TypeConverter &typeConverter,
-                                   MLIRContext *context, LoweringState &state)
-      : OpConversionPattern<MadBiasLikeOp>(typeConverter, context), state(state) {}
+  explicit LowerMadRawPattern(TypeConverter &typeConverter,
+                              MLIRContext *context, LoweringState &state)
+      : OpConversionPattern<RawOp>(typeConverter, context), state(state) {}
 
   LogicalResult
-  matchAndRewrite(MadBiasLikeOp op, typename MadBiasLikeOp::Adaptor adaptor,
+  matchAndRewrite(RawOp op, typename RawOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    Value lhsRaw = adaptor.getLhs();
-    Value rhsRaw = adaptor.getRhs();
-    Value dstRaw = adaptor.getDst();
-    Value biasRaw = adaptor.getBias();
-    Value m = adaptor.getM();
-    Value n = adaptor.getN();
-    Value k = adaptor.getK();
-    if (!lhsRaw || !rhsRaw || !dstRaw || !biasRaw || !m || !n || !k)
-      return rewriter.notifyMatchFailure(op, "expected converted mad_bias operands");
-
-    if (!isa<LLVM::LLVMPointerType>(lhsRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(rhsRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(dstRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(biasRaw.getType())) {
-      return rewriter.notifyMatchFailure(op,
-                                         "expected LLVM pointer lhs/rhs/dst/bias");
-    }
-
-    Type i64Ty = rewriter.getI64Type();
-    constexpr unsigned caAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::LEFT);
-    constexpr unsigned cbAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::RIGHT);
-    constexpr unsigned ccAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::ACC);
-    constexpr unsigned btAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::BIAS);
-    FailureOr<Value> lhs =
-        reinterpretPointerToAddrSpace(op, lhsRaw, caAddressSpace);
-    FailureOr<Value> rhs =
-        reinterpretPointerToAddrSpace(op, rhsRaw, cbAddressSpace);
-    FailureOr<Value> dst =
-        reinterpretPointerToAddrSpace(op, dstRaw, ccAddressSpace);
-    FailureOr<Value> bias =
-        reinterpretPointerToAddrSpace(op, biasRaw, btAddressSpace);
-    if (failed(lhs) || failed(rhs) || failed(dst) || failed(bias)) {
-      return rewriter.notifyMatchFailure(op, "failed to map cube pointer spaces");
-    }
-
-    FailureOr<StringRef> calleeName = buildMadCallee(op.getContext(), op);
-    if (failed(calleeName)) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported mad element types for mad dispatch");
-    }
-
-    FailureOr<Value> config =
-        packMadConfig(op, m, n, k, op.getUnitFlagCtrl(), op.getDisableGemv(),
-                      /*cmatrixSource=*/true, /*cmatrixInit=*/false);
-    if (failed(config))
-      return rewriter.notifyMatchFailure(op, "failed to pack mad config");
-
-    Value packedDst = buildMadBiasDestination(op, rewriter, *dst, *bias);
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{dst->getType(), lhs->getType(), rhs->getType(), i64Ty},
-        TypeRange{});
-    rewriter.create<func::CallOp>(op.getLoc(), *calleeName, TypeRange{},
-                                  ValueRange{packedDst, *lhs, *rhs, *config});
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    rewriter.eraseOp(op);
-    return success();
-  }
-
-private:
-  LoweringState &state;
-};
-
-class LowerMadMxOpPattern final
-    : public OpConversionPattern<pto::MadMxOp> {
-public:
-  explicit LowerMadMxOpPattern(TypeConverter &typeConverter,
-                                   MLIRContext *context, LoweringState &state)
-      : OpConversionPattern<pto::MadMxOp>(typeConverter, context),
-        state(state) {}
-
-  LogicalResult
-  matchAndRewrite(pto::MadMxOp op, pto::MadMxOp::Adaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Value lhsRaw = adaptor.getLhs();
-    Value rhsRaw = adaptor.getRhs();
-    Value dstRaw = adaptor.getDst();
-    Value m = adaptor.getM();
-    Value n = adaptor.getN();
-    Value k = adaptor.getK();
-    if (!lhsRaw || !rhsRaw || !dstRaw || !m || !n || !k) {
-      return rewriter.notifyMatchFailure(op,
-                                         "expected converted mad_mx operands");
-    }
-
-    if (!isa<LLVM::LLVMPointerType>(lhsRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(rhsRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(dstRaw.getType())) {
-      return rewriter.notifyMatchFailure(op,
-                                         "expected LLVM pointer lhs/rhs/dst");
-    }
-
-    Type i64Ty = rewriter.getI64Type();
-    constexpr unsigned caAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::LEFT);
-    constexpr unsigned cbAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::RIGHT);
-    constexpr unsigned ccAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::ACC);
-    FailureOr<Value> lhs =
-        reinterpretPointerToAddrSpace(op, lhsRaw, caAddressSpace);
-    FailureOr<Value> rhs =
-        reinterpretPointerToAddrSpace(op, rhsRaw, cbAddressSpace);
-    FailureOr<Value> dst =
-        reinterpretPointerToAddrSpace(op, dstRaw, ccAddressSpace);
-    if (failed(lhs) || failed(rhs) || failed(dst))
-      return rewriter.notifyMatchFailure(op, "failed to map cube pointer spaces");
-
-    FailureOr<StringRef> calleeName = buildMadMxCallee(op.getContext(), op);
-    if (failed(calleeName)) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported mad_mx element types for mad_mx dispatch");
-    }
-    FailureOr<Value> config =
-        packMadConfig(op, m, n, k, op.getUnitFlagCtrl(), op.getDisableGemv(),
-                      /*cmatrixSource=*/false, /*cmatrixInit=*/true);
-    if (failed(config))
-      return rewriter.notifyMatchFailure(op, "failed to pack mad config");
-
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{dst->getType(), lhs->getType(), rhs->getType(), i64Ty},
-        TypeRange{});
-    auto call =
-        rewriter.create<func::CallOp>(op.getLoc(), *calleeName, TypeRange{},
-                                      ValueRange{*dst, *lhs, *rhs, *config});
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    rewriter.eraseOp(op);
-    (void)call;
-    return success();
+    auto raw = dyn_cast<pto::MadRawOpInterface>(op.getOperation());
+    if (!raw)
+      return failure();
+    return lowerMadRawOp(raw, adaptor.getOperands(), rewriter, state);
   }
 
 private:
@@ -4323,12 +4112,12 @@ public:
 
     constexpr unsigned cbufAddressSpace =
         static_cast<unsigned>(pto::AddressSpace::MAT);
-    constexpr unsigned caAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::LEFT);
+    constexpr unsigned cbAddressSpace =
+        static_cast<unsigned>(pto::AddressSpace::RIGHT);
     FailureOr<Value> src = reinterpretPointerToAddrSpace(op, srcRaw, cbufAddressSpace);
-    FailureOr<Value> dst = reinterpretPointerToAddrSpace(op, dstRaw, caAddressSpace);
+    FailureOr<Value> dst = reinterpretPointerToAddrSpace(op, dstRaw, cbAddressSpace);
     if (failed(src) || failed(dst))
-      return rewriter.notifyMatchFailure(op, "failed to map cbuf/ca pointer spaces");
+      return rewriter.notifyMatchFailure(op, "failed to map cbuf/cb pointer spaces");
 
     Type sourceElemType = cast<pto::PtrType>(op.getSource().getType()).getElementType();
     unsigned elemBitWidth = sourceElemType.getIntOrFloatBitWidth();
@@ -4348,7 +4137,7 @@ public:
     auto i64Ty = rewriter.getI64Type();
     Value dstAddr = rewriter.create<LLVM::PtrToIntOp>(op.getLoc(), i64Ty, *dst);
 
-    StringRef calleeName = buildLoadCbufToCaMxCallee(op.getContext());
+    StringRef calleeName = buildLoadCbufToCbMxCallee(op.getContext());
     auto funcType = rewriter.getFunctionType(
         TypeRange{i64Ty, src->getType(), i64Ty, i64Ty},
         TypeRange{});
@@ -7462,10 +7251,10 @@ static void populateVPTOOpLoweringPatterns(VPTOTypeConverter &typeConverter,
                LowerCopyCbufToBtOpPattern, LowerCopyCbufToFbufOpPattern,
                LowerCopyGmToCbufMultiOpPattern<pto::CopyGmToCbufMultiNd2NzOp>,
                LowerCopyGmToCbufMultiOpPattern<pto::CopyGmToCbufMultiDn2NzOp>,
-               LowerMadOpPattern, LowerMadAccLikePattern<pto::MadAccOp>,
-               LowerMadBiasLikePattern<pto::MadBiasOp>, LowerMadMxOpPattern,
-               LowerMadAccLikePattern<pto::MadMxAccOp>,
-               LowerMadBiasLikePattern<pto::MadMxBiasOp>,
+               LowerMadRawPattern<pto::MadRawOp>,
+               LowerMadRawPattern<pto::MadBiasRawOp>,
+               LowerMadRawPattern<pto::MadMxRawOp>,
+               LowerMadRawPattern<pto::MadMxBiasRawOp>,
                LowerCopyOpPattern<pto::CopyGmToUbufOp>,
                LowerCopyOpPattern<pto::CopyUbufToGmOp>,
                LowerCopyUbufToUbufOpPattern,
@@ -7545,7 +7334,9 @@ static void configureVPTOOpLoweringTarget(ConversionTarget &target,
                       pto::CopyGmToCbufMultiNd2NzOp,
                       pto::CopyGmToCbufMultiDn2NzOp,
                       pto::MadOp, pto::MadAccOp, pto::MadBiasOp, pto::MadMxOp,
-                      pto::MadMxAccOp, pto::MadMxBiasOp>();
+                      pto::MadMxAccOp, pto::MadMxBiasOp,
+                      pto::MadRawOp, pto::MadBiasRawOp, pto::MadMxRawOp,
+                      pto::MadMxBiasRawOp>();
   target.markUnknownOpDynamicallyLegal([](Operation *) { return true; });
 }
 

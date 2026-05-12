@@ -14,17 +14,22 @@ import sys
 import numpy as np
 
 
+def is_close(golden: np.ndarray, output: np.ndarray) -> np.ndarray:
+    return np.isclose(golden, output, atol=1e-2, rtol=1e-2, equal_nan=True)
+
+
 def compare_bin(golden_path: str, output_path: str) -> bool:
     if not os.path.exists(golden_path) or not os.path.exists(output_path):
-      return False
+        print(f"[ERROR] missing file: {golden_path} or {output_path}")
+        return False
     golden = np.fromfile(golden_path, dtype=np.float32)
     output = np.fromfile(output_path, dtype=np.float32)
     if golden.shape != output.shape:
         print(f"[ERROR] shape mismatch: {golden.shape} vs {output.shape}")
         return False
-    if np.allclose(golden, output, atol=1e-2, rtol=1e-2):
+    if np.all(is_close(golden, output)):
         return True
-    diff = np.where(np.abs(golden - output) > (1e-2 + 1e-2 * np.abs(golden)))[0]
+    diff = np.where(~is_close(golden, output))[0]
     idx = int(diff[0]) if diff.size else 0
     print(f"[ERROR] first mismatch at idx={idx}: golden={float(golden[idx])}, out={float(output[idx])}")
     return False
@@ -33,6 +38,7 @@ def compare_bin(golden_path: str, output_path: str) -> bool:
 def main() -> None:
     strict = os.getenv("COMPARE_STRICT", "1") != "0"
     ok = compare_bin("golden_v3.bin", "v3.bin")
+    ok = compare_bin("golden_v4.bin", "v4.bin") and ok
     if not ok:
         if strict:
             print("[ERROR] compare failed")

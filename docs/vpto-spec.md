@@ -1203,7 +1203,7 @@ This section provides a categorized overview of all PTO micro Instruction operat
 | Scalar Operations | 8 | `pto.vadds`, `pto.vmuls`, etc. |
 | Transcendental | 6 | `pto.vexp`, `pto.vln`, `pto.vsqrt`, etc. |
 | Reduction | 10 | `pto.vcadd`, `pto.vcmax`, `pto.vcmin` |
-| Cube matmul family (zero-init / accumulate / bias-init; shared attrs `unit_flag_ctrl` and `disable_gemv`) | 16 | `pto.mad`, `pto.mad_acc`, `pto.mad_bias`, `pto.mad_mx`, `pto.mad_mx_acc`, `pto.mad_mx_bias` |
+| Cube matmul family (zero-init / accumulate / bias-init; shared clauses `unit_flag`, `disable_gemv`, `sat`, `tf32_mode`, `n_dir`) | 16 | `pto.mad`, `pto.mad_acc`, `pto.mad_bias`, `pto.mad_mx`, `pto.mad_mx_acc`, `pto.mad_mx_bias` |
 | Comparison | 11 | `pto.vcmp`, `pto.vcmps` |
 | Selection | 11 | `pto.vsel`, `pto.vselr` |
 

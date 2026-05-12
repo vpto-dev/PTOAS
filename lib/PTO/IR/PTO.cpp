@@ -13723,5 +13723,6 @@ void TFreeOp::getEffects(
 
 // [Include 必须放在最后]
 #include "PTO/IR/PTOInterfaces.cpp.inc"
+#include "PTO/IR/VPTOInterfaces.cpp.inc"
 #define GET_OP_CLASSES
 #include "PTO/IR/PTOOps.cpp.inc"

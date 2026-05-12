@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -22,7 +23,7 @@
 
 namespace mlir {
 namespace pto {
-#define GEN_PASS_DEF_PTOVPTOEXPANDBRIDGEOPS
+#define GEN_PASS_DEF_VPTOEXPANDWRAPPEROPS
 #include "PTO/Transforms/Passes.h.inc"
 } // namespace pto
 } // namespace mlir
@@ -381,6 +382,98 @@ static Value packLoopSize(Location loc, Value loop2, Value loop1,
   Value shift = rewriter.create<arith::ConstantIntOp>(loc, 21, 64);
   Value loop2Shifted = rewriter.create<arith::ShLIOp>(loc, loop2, shift);
   return rewriter.create<arith::OrIOp>(loc, loop2Shifted, loop1);
+}
+
+static Value castIntegerLikeTo(Location loc, Value value, Type targetType,
+                               PatternRewriter &rewriter) {
+  if (value.getType() == targetType)
+    return value;
+
+  auto targetInt = dyn_cast<IntegerType>(targetType);
+  if (value.getType().isIndex() && targetInt)
+    return rewriter.create<arith::IndexCastOp>(loc, targetType, value);
+  if (auto sourceInt = dyn_cast<IntegerType>(value.getType())) {
+    if (targetInt) {
+      if (sourceInt.getWidth() < targetInt.getWidth())
+        return rewriter.create<arith::ExtUIOp>(loc, targetType, value);
+      if (sourceInt.getWidth() > targetInt.getWidth())
+        return rewriter.create<arith::TruncIOp>(loc, targetType, value);
+      return value;
+    }
+    if (targetType.isIndex())
+      return rewriter.create<arith::IndexCastOp>(loc, targetType, value);
+  }
+
+  return {};
+}
+
+static FailureOr<Value> packMadXt(Location loc, Value m, Value n, Value k,
+                                  std::optional<pto::MadUnitFlagMode> unitFlagMode,
+                                  bool disableGemv, bool cmatrixSource,
+                                  bool cmatrixInit,
+                                  PatternRewriter &rewriter) {
+  Type i64Ty = rewriter.getI64Type();
+  Value mI64 = castIntegerLikeTo(loc, m, i64Ty, rewriter);
+  Value nI64 = castIntegerLikeTo(loc, n, i64Ty, rewriter);
+  Value kI64 = castIntegerLikeTo(loc, k, i64Ty, rewriter);
+  if (!mI64 || !nI64 || !kI64)
+    return failure();
+
+  auto constant = [&](uint64_t value) -> Value {
+    return rewriter.create<arith::ConstantIntOp>(loc, value, 64);
+  };
+  auto shl = [&](Value value, uint64_t amount) -> Value {
+    return rewriter.create<arith::ShLIOp>(loc, value, constant(amount));
+  };
+  auto bitOr = [&](Value lhs, Value rhs) -> Value {
+    return rewriter.create<arith::OrIOp>(loc, lhs, rhs);
+  };
+
+  Value xt = mI64;
+  xt = bitOr(xt, shl(kI64, 12));
+  xt = bitOr(xt, shl(nI64, 24));
+  if (unitFlagMode) {
+    uint64_t unitFlagCtrl =
+        *unitFlagMode == pto::MadUnitFlagMode::CheckOnly ? 2 : 3;
+    xt = bitOr(xt, shl(constant(unitFlagCtrl), 55));
+  }
+  if (disableGemv)
+    xt = bitOr(xt, shl(constant(1), 61));
+  if (cmatrixSource)
+    xt = bitOr(xt, shl(constant(1), 62));
+  if (cmatrixInit)
+    xt = bitOr(xt, shl(constant(1), 63));
+  return xt;
+}
+
+static Value setCtrlBit(Location loc, Value ctrl, unsigned bitIndex, bool value,
+                        PatternRewriter &rewriter) {
+  Value bit = rewriter.create<arith::ConstantIntOp>(loc, bitIndex, 64);
+  if (value)
+    return rewriter.create<pto::Sbitset1Op>(loc, ctrl, bit).getResult();
+  return rewriter.create<pto::Sbitset0Op>(loc, ctrl, bit).getResult();
+}
+
+static Value buildMadSemanticCtrl(Location loc, Value ctrl,
+                                  bool isHif8,
+                                  std::optional<pto::Tf32Mode> tf32Mode,
+                                  std::optional<pto::MadSatMode> satMode,
+                                  bool hasNDir,
+                                  PatternRewriter &rewriter) {
+  ctrl = setCtrlBit(loc, ctrl, 45, isHif8, rewriter);
+  if (tf32Mode) {
+    ctrl = setCtrlBit(loc, ctrl, 46, true, rewriter);
+    ctrl = setCtrlBit(loc, ctrl, 47,
+                      *tf32Mode == pto::Tf32Mode::RoundAway, rewriter);
+  } else {
+    ctrl = setCtrlBit(loc, ctrl, 46, false, rewriter);
+    ctrl = setCtrlBit(loc, ctrl, 47, false, rewriter);
+  }
+  if (satMode)
+    ctrl = setCtrlBit(loc, ctrl, 48, *satMode == pto::MadSatMode::NoSat,
+                      rewriter);
+  ctrl = setCtrlBit(loc, ctrl, 51, hasNDir, rewriter);
+  return ctrl;
 }
 
 static Value packMte2NzPara(Location loc, Value groupCount, Value dstLoop2Stride,
@@ -747,6 +840,100 @@ struct ExpandUvldPattern : public OpRewritePattern<pto::UvldOp> {
         ValueRange{loadPtr, align});
     rewriter.replaceOp(op, load.getResult());
     return success();
+  }
+};
+
+enum class MadRawKind { Ordinary, OrdinaryBias, Mx, MxBias };
+
+static MadRawKind deriveMadRawKind(pto::MadSemanticOpInterface op) {
+  if (op.isMadMxFamily())
+    return op.hasBiasOperand() ? MadRawKind::MxBias : MadRawKind::Mx;
+  return op.hasBiasOperand() ? MadRawKind::OrdinaryBias
+                             : MadRawKind::Ordinary;
+}
+
+static LogicalResult emitMadRawOp(pto::MadSemanticOpInterface op,
+                                  MadRawKind kind, Value xt,
+                                  PatternRewriter &rewriter) {
+  Location loc = op->getLoc();
+  Value lhs = op.getLhs();
+  Value rhs = op.getRhs();
+  Value dst = op.getDst();
+  switch (kind) {
+  case MadRawKind::Ordinary:
+    rewriter.create<pto::MadRawOp>(loc, lhs, rhs, dst, xt);
+    return success();
+  case MadRawKind::OrdinaryBias:
+    rewriter.create<pto::MadBiasRawOp>(loc, lhs, rhs, dst, op.getBiasOrNull(),
+                                       xt);
+    return success();
+  case MadRawKind::Mx:
+    rewriter.create<pto::MadMxRawOp>(loc, lhs, rhs, dst, xt);
+    return success();
+  case MadRawKind::MxBias:
+    rewriter.create<pto::MadMxBiasRawOp>(loc, lhs, rhs, dst,
+                                         op.getBiasOrNull(), xt);
+    return success();
+  }
+  return failure();
+}
+
+static LogicalResult lowerMadSemanticOp(pto::MadSemanticOpInterface op,
+                                        PatternRewriter &rewriter) {
+  std::optional<pto::MadUnitFlagMode> unitFlagMode;
+  if (auto unitFlagModeAttr =
+          dyn_cast_or_null<pto::MadUnitFlagModeAttr>(op.getUnitFlagModeAttr()))
+    unitFlagMode = unitFlagModeAttr.getValue();
+
+  std::optional<pto::Tf32Mode> tf32Mode;
+  if (op.supportsTf32Mode()) {
+    if (auto tf32ModeAttr =
+            dyn_cast_or_null<pto::Tf32ModeAttr>(op.getTf32ModeAttr()))
+      tf32Mode = tf32ModeAttr.getValue();
+  }
+
+  std::optional<pto::MadSatMode> satMode;
+  if (auto satModeAttr =
+          dyn_cast_or_null<pto::MadSatModeAttr>(op.getSatModeAttr()))
+    satMode = satModeAttr.getValue();
+
+  bool isHif8 = false;
+  if (auto lhsPtr = dyn_cast<pto::PtrType>(op.getLhs().getType()))
+    isHif8 = pto::isPTOHiFloat8Type(lhsPtr.getElementType());
+
+  Location loc = op->getLoc();
+  Value ctrlSaved = rewriter.create<pto::GetCtrlOp>(loc).getResult();
+  Value ctrlForOp = buildMadSemanticCtrl(loc, ctrlSaved, isHif8, tf32Mode,
+                                         satMode, op.getNDir(), rewriter);
+  rewriter.create<pto::SetCtrlOp>(loc, ctrlForOp);
+
+  FailureOr<Value> xt =
+      packMadXt(loc, op.getM(), op.getN(), op.getK(), unitFlagMode,
+                op.getDisableGemv(), op.initializesAccumulatorWithBias(),
+                op.initializesAccumulatorWithZero(), rewriter);
+  if (failed(xt))
+    return rewriter.notifyMatchFailure(op, "failed to pack mad xt");
+
+  if (failed(emitMadRawOp(op, deriveMadRawKind(op), *xt, rewriter)))
+    return rewriter.notifyMatchFailure(op, "failed to emit mad raw op");
+
+  rewriter.create<pto::SetCtrlOp>(loc, ctrlSaved);
+  rewriter.eraseOp(op);
+  return success();
+}
+
+template <typename SemanticOp>
+class ExpandMadSemanticPattern final : public OpRewritePattern<SemanticOp> {
+public:
+  explicit ExpandMadSemanticPattern(MLIRContext *context)
+      : OpRewritePattern<SemanticOp>(context) {}
+
+  LogicalResult matchAndRewrite(SemanticOp op,
+                                PatternRewriter &rewriter) const override {
+    auto semantic = dyn_cast<pto::MadSemanticOpInterface>(op.getOperation());
+    if (!semantic)
+      return failure();
+    return lowerMadSemanticOp(semantic, rewriter);
   }
 };
 
@@ -1433,10 +1620,10 @@ struct ExpandAccStoreUbPattern : public OpRewritePattern<pto::AccStoreUbOp> {
   }
 };
 
-struct PTOVPTOExpandBridgeOpsPass
-    : public pto::impl::PTOVPTOExpandBridgeOpsBase<PTOVPTOExpandBridgeOpsPass> {
-  using pto::impl::PTOVPTOExpandBridgeOpsBase<
-      PTOVPTOExpandBridgeOpsPass>::PTOVPTOExpandBridgeOpsBase;
+struct VPTOExpandWrapperOpsPass
+    : public pto::impl::VPTOExpandWrapperOpsBase<VPTOExpandWrapperOpsPass> {
+  using pto::impl::VPTOExpandWrapperOpsBase<
+      VPTOExpandWrapperOpsPass>::VPTOExpandWrapperOpsBase;
 
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<arith::ArithDialect, func::FuncDialect, pto::PTODialect,
@@ -1457,7 +1644,13 @@ struct PTOVPTOExpandBridgeOpsPass
                  ExpandRightLoadPattern, ExpandLeftLoadMxPattern,
                  ExpandRightLoadMxPattern, ExpandAccStorePattern,
                  ExpandAccStoreGmPattern,
-                 ExpandAccStoreUbPattern>(&getContext());
+                 ExpandAccStoreUbPattern,
+                 ExpandMadSemanticPattern<pto::MadOp>,
+                 ExpandMadSemanticPattern<pto::MadAccOp>,
+                 ExpandMadSemanticPattern<pto::MadBiasOp>,
+                 ExpandMadSemanticPattern<pto::MadMxOp>,
+                 ExpandMadSemanticPattern<pto::MadMxAccOp>,
+                 ExpandMadSemanticPattern<pto::MadMxBiasOp>>(&getContext());
     if (failed(applyPatternsAndFoldGreedily(func, std::move(patterns))))
       signalPassFailure();
   }
@@ -1465,6 +1658,6 @@ struct PTOVPTOExpandBridgeOpsPass
 
 } // namespace
 
-std::unique_ptr<Pass> mlir::pto::createPTOVPTOExpandBridgeOpsPass() {
-  return std::make_unique<PTOVPTOExpandBridgeOpsPass>();
+std::unique_ptr<Pass> mlir::pto::createVPTOExpandWrapperOpsPass() {
+  return std::make_unique<VPTOExpandWrapperOpsPass>();
 }

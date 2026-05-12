@@ -16,7 +16,7 @@ import numpy as np
 
 def compare_bin(golden_path: str, output_path: str) -> bool:
     if not os.path.exists(golden_path) or not os.path.exists(output_path):
-      return False
+        return False
     golden = np.fromfile(golden_path, dtype=np.float32)
     output = np.fromfile(output_path, dtype=np.float32)
     if golden.shape != output.shape:
@@ -33,6 +33,7 @@ def compare_bin(golden_path: str, output_path: str) -> bool:
 def main() -> None:
     strict = os.getenv("COMPARE_STRICT", "1") != "0"
     ok = compare_bin("golden_v3.bin", "v3.bin")
+    ok = compare_bin("golden_v4.bin", "v4.bin") and ok
     if not ok:
         if strict:
             print("[ERROR] compare failed")
