@@ -1910,6 +1910,37 @@ LogicalResult mlir::pto::AddPtrOp::verify() {
   return success();
 }
 
+LogicalResult mlir::pto::LocalArrayGetOp::verify() {
+  auto arrayTy = getArray().getType();
+  int64_t rank = arrayTy.getRank();
+  int64_t numIdx = static_cast<int64_t>(getIndices().size());
+  if (numIdx != rank)
+    return emitOpError() << "expects " << rank
+                         << " indices for !pto.local_array of rank " << rank
+                         << ", got " << numIdx;
+  if (getResult().getType() != arrayTy.getElementType())
+    return emitOpError()
+           << "result type " << getResult().getType()
+           << " does not match array element type "
+           << arrayTy.getElementType();
+  return success();
+}
+
+LogicalResult mlir::pto::LocalArraySetOp::verify() {
+  auto arrayTy = getArray().getType();
+  int64_t rank = arrayTy.getRank();
+  int64_t numIdx = static_cast<int64_t>(getIndices().size());
+  if (numIdx != rank)
+    return emitOpError() << "expects " << rank
+                         << " indices for !pto.local_array of rank " << rank
+                         << ", got " << numIdx;
+  if (getValue().getType() != arrayTy.getElementType())
+    return emitOpError() << "value type " << getValue().getType()
+                         << " does not match array element type "
+                         << arrayTy.getElementType();
+  return success();
+}
+
 
 
 
@@ -9356,6 +9387,43 @@ Type TileType::parse(AsmParser &parser) {
 
 void TileType::print(AsmPrinter &printer) const {
   printShapeAndElem(printer, getShape(), getElementType());
+}
+
+// ---- LocalArrayType ----
+// Asm form: !pto.local_array<D1 x D2 x ... x Dk x T>
+// Static shape only (no '?'). Element type must be a scalar; this is enforced
+// by the type verifier below.
+Type LocalArrayType::parse(AsmParser &parser) {
+  SmallVector<int64_t, 4> shape;
+  Type elemTy;
+  if (failed(parseShapeAndElem(parser, shape, elemTy, /*allowDynamic=*/false)))
+    return Type();
+  return LocalArrayType::getChecked(
+      [&]() { return parser.emitError(parser.getNameLoc()); },
+      parser.getContext(), shape, elemTy);
+}
+
+void LocalArrayType::print(AsmPrinter &printer) const {
+  printShapeAndElem(printer, getShape(), getElementType());
+}
+
+LogicalResult LocalArrayType::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    llvm::ArrayRef<int64_t> shape, Type elementType) {
+  if (shape.empty())
+    return emitError() << "'!pto.local_array' requires at least one dimension";
+  for (auto [i, d] : llvm::enumerate(shape)) {
+    if (d <= 0)
+      return emitError()
+             << "'!pto.local_array' dimension " << i
+             << " must be a positive static size, got " << d;
+  }
+  if (!elementType.isIntOrFloat())
+    return emitError()
+           << "'!pto.local_array' element type must be a scalar integer or "
+              "float, got "
+           << elementType;
+  return success();
 }
 
 // =============================================================================

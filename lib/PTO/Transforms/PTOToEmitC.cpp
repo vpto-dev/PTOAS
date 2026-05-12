@@ -454,6 +454,15 @@ public:
       return emitc::OpaqueType::get(Ctx, tok);
     });
 
+    // !pto.local_array<D1 x D2 x ... x T> -> !emitc.array<D1 x D2 x ... x T>.
+    // Variables of this type render as `T a[D1][D2]...;` in the emitted C++.
+    addConversion([this](pto::LocalArrayType type) -> std::optional<Type> {
+      Type convertedElem = convertType(type.getElementType());
+      if (!convertedElem)
+        return std::nullopt;
+      return emitc::ArrayType::get(type.getShape(), convertedElem);
+    });
+
     addConversion([Ctx](pto::AsyncSessionType type) -> Type {
       (void)type;
       return emitc::OpaqueType::get(Ctx, "pto::comm::AsyncSession");
@@ -6264,6 +6273,83 @@ struct PTOEventIdArraySetToEmitC
   }
 };
 
+// pto.declare_local_array -> emitc.variable of !emitc.array<...>.
+// Renders as `T a[D1][D2]...;` in the emitted C++.
+struct PTODeclareLocalArrayToEmitC
+    : public OpConversionPattern<mlir::pto::DeclareLocalArrayOp> {
+  using OpConversionPattern<
+      mlir::pto::DeclareLocalArrayOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(mlir::pto::DeclareLocalArrayOp op,
+                                OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    (void)adaptor;
+    Type arrayTy = getTypeConverter()->convertType(op.getArray().getType());
+    if (!arrayTy)
+      return rewriter.notifyMatchFailure(op,
+                                         "failed to map !pto.local_array type");
+
+    auto var = rewriter
+                   .create<emitc::VariableOp>(
+                       op.getLoc(), arrayTy,
+                       emitc::OpaqueAttr::get(rewriter.getContext(), ""))
+                   .getResult();
+    rewriter.replaceOp(op, var);
+    return success();
+  }
+};
+
+// pto.local_array_get %a[%i0, %i1, ...] -> rvalue.
+// Lowers to a single emitc.subscript with the full index pack; the C++ emitter
+// prints it as `a[i0][i1]...`. The adaptor already exposes target-typed values
+// (the type converter has remapped !pto.local_array -> !emitc.array and
+// index/integer indices), so they're forwarded directly to the builder.
+struct PTOLocalArrayGetToEmitC
+    : public OpConversionPattern<mlir::pto::LocalArrayGetOp> {
+  using OpConversionPattern<
+      mlir::pto::LocalArrayGetOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(mlir::pto::LocalArrayGetOp op,
+                                OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Type resultTy =
+        getTypeConverter()->convertType(op.getResult().getType());
+    if (!resultTy)
+      return rewriter.notifyMatchFailure(
+          op, "failed to map local_array element type");
+
+    auto sub = rewriter.create<emitc::SubscriptOp>(
+        op.getLoc(), resultTy, adaptor.getArray(), adaptor.getIndices());
+    rewriter.replaceOp(op, sub.getResult());
+    return success();
+  }
+};
+
+// pto.local_array_set %a[%i0, %i1, ...], %v -> emitc.assign to subscript slot.
+// The C++ emitter prints this as `a[i0][i1]... = v;`. As above, adaptor values
+// are already target-typed; pass them through directly.
+struct PTOLocalArraySetToEmitC
+    : public OpConversionPattern<mlir::pto::LocalArraySetOp> {
+  using OpConversionPattern<
+      mlir::pto::LocalArraySetOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(mlir::pto::LocalArraySetOp op,
+                                OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Value value = adaptor.getValue();
+    Type elemTy = value.getType();
+
+    Value slot = rewriter
+                     .create<emitc::SubscriptOp>(op.getLoc(), elemTy,
+                                                 adaptor.getArray(),
+                                                 adaptor.getIndices())
+                     .getResult();
+    rewriter.create<emitc::AssignOp>(op.getLoc(), slot, value);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 static std::optional<int64_t> getStaticIndexLikeValue(Value value) {
   if (!value)
     return std::nullopt;
@@ -11787,6 +11873,9 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTODeclareEventIdArrayToEmitC>(typeConverter, ctx);
   patterns.add<PTOEventIdArrayGetToEmitC>(typeConverter, ctx);
   patterns.add<PTOEventIdArraySetToEmitC>(typeConverter, ctx);
+  patterns.add<PTODeclareLocalArrayToEmitC>(typeConverter, ctx);
+  patterns.add<PTOLocalArrayGetToEmitC>(typeConverter, ctx);
+  patterns.add<PTOLocalArraySetToEmitC>(typeConverter, ctx);
   patterns.add<PTOTReshapeToEmitC>(typeConverter, ctx);
   patterns.add<PTOBitcastToEmitC>(typeConverter, ctx);
   patterns.add<PTOTAllocToEmitC>(typeConverter, ctx, targetArch);

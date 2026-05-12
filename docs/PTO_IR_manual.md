@@ -168,6 +168,43 @@ dimension counts FP4 pairs stored per byte, not logical scalar FP4 elements.
 
 ---
 
+### 2.6 `!pto.local_array<D1 x D2 x ... x Dk x T>`
+
+A **C++ stack-local statically-shaped array**. Lowers to a plain `T a[D1][D2]...;`
+declaration in the emitted C++ — the array's address is decided by the host C++
+compiler, not by PTO memory planning.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| shape (`D1..Dk`) | static positive `int64` per dim, `k ≥ 1` | Static dimensions; `?` is **not** allowed |
+| `T` | scalar `int` / `float` family | Element type; aggregates / nested `local_array` are not allowed |
+
+**Constraints (enforced by the type verifier):**
+- rank ≥ 1
+- every `Di > 0` (no dynamic shape, no zero-sized dims)
+- `T` is a scalar integer or float
+
+**Disjoint from tile-buf world.** Values of `!pto.local_array<...>` never
+participate in `pto.pointer_cast`, `pto-plan-memory`, or
+`AllocToPointerCast` rewrites — these passes match on `memref` / tile-buf
+types and simply do not see this type.
+
+**Syntax:**
+```mlir
+!pto.local_array<16xi32>      // int32_t a[16];
+!pto.local_array<4x8xf32>     // float   m[4][8];
+```
+
+**Associated ops** (see Section 4 — mirrors the `eventid_array` triad):
+- `pto.declare_local_array` — declare
+- `pto.local_array_get`     — `a[i0][i1]...` rvalue
+- `pto.local_array_set`     — `a[i0][i1]... = v;`
+
+The number of indices on `get` / `set` must equal the array's rank
+(verifier-checked).
+
+---
+
 ## 3. Enums & Attributes
 
 ### 3.1 AddressSpace
@@ -9287,6 +9324,94 @@ pto.comm.treduce(%dst, %acc, recv(%ping, %pong), group(%g0, %g1, %g2) :
 
 ---
 
+### 4.22 Stack-Local Array Operations
+
+Minimum support for **C++ stack-local statically-shaped arrays of scalars** —
+suitable for small auxiliary buffers in host scalar code. Disjoint from the
+tile-buf world: these values do not participate in PTO memory planning or
+`pto.pointer_cast`, and their underlying address is decided by the host C++
+compiler. Naming and asm style mirror the `eventid_array` triad.
+
+Operates on the [`!pto.local_array<...>`](#26-ptolocal_arrayd1-x-d2-x--x-dk-x-t) type. See Section 2.6 for type-level constraints.
+
+##### `pto.declare_local_array` - Declare a Stack-Local Array
+
+**Summary:** Declare a statically-shaped scalar array on the C++ stack.
+
+**Semantics:** Lowers to `T a[D1][D2]...;` in the emitted C++.
+
+**Arguments:** None.
+
+**Results:** `!pto.local_array<D1 x D2 x ... x T>`
+
+**Basic Example:**
+
+```mlir
+%a = pto.declare_local_array -> !pto.local_array<16xi32>     // int32_t a[16];
+%m = pto.declare_local_array -> !pto.local_array<4x8xf32>    // float   m[4][8];
+```
+
+---
+
+##### `pto.local_array_get` - Read One Element by Index
+
+**Summary:** Read a single element by full-rank indexing.
+
+**Semantics:** `result = a[i0][i1]...[iN-1]` (rvalue).
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `array` | `!pto.local_array<D1 x ... x Dk x T>` | The local array |
+| `indices` | variadic `Index` | Exactly `k` indices, one per dim |
+
+**Results:** Scalar matching the array's element type.
+
+**Constraints & Verification:**
+
+- Number of indices must equal the array's rank (verifier error otherwise).
+- Result type must equal the array's element type.
+
+**Basic Example:**
+
+```mlir
+%v = pto.local_array_get %m[%i, %j]
+   : !pto.local_array<4x8xf32> -> f32                      // v = m[i][j];
+```
+
+---
+
+##### `pto.local_array_set` - Write One Element by Index
+
+**Summary:** Write a scalar into one element by full-rank indexing.
+
+**Semantics:** `a[i0][i1]...[iN-1] = value;`
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `array` | `!pto.local_array<D1 x ... x Dk x T>` | The local array |
+| `indices` | variadic `Index` | Exactly `k` indices, one per dim |
+| `value` | `ScalarType` | Scalar value to write |
+
+**Results:** None.
+
+**Constraints & Verification:**
+
+- Number of indices must equal the array's rank.
+- `value` type must equal the array's element type.
+
+**Basic Example:**
+
+```mlir
+pto.local_array_set %m[%i, %j], %v
+   : !pto.local_array<4x8xf32>, f32                        // m[i][j] = v;
+```
+
+---
+
 ## 5. Operation Summary Table
 
 | Category | Count | Pipeline |
@@ -9309,5 +9434,6 @@ pto.comm.treduce(%dst, %acc, recv(%ping, %pong), group(%g0, %g1, %g2) :
 | CV-Related | 2 | - |
 | Runtime Intrinsics | 4 | - (Pure) |
 | Debug | 3 | - |
+| Stack-Local Array | 3 | - (Scalar / Host) |
 
-**Total: 107 operations**
+**Total: 110 operations**
