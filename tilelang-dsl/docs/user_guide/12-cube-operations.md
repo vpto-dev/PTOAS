@@ -7,17 +7,20 @@ bodies. All Cube operands use `pto.ptr<T, addr_space>` raw pointers — no
 
 ## Address Spaces
 
-Cube operations use the following address spaces via the `MemorySpace` enum:
+Cube operations use the following address spaces via the `MemorySpace` enum.
+The IR type column shows the canonical `!pto.ptr` spelling. Older
+`mat`/`left`/`right`/`acc`/`bias`/`scaling` pointer spellings are accepted as
+parser aliases and print back as `l1`/`l0a`/`l0b`/`l0c`/`bt`/`fb`.
 
-| Address Space | Enum Value | Description | IR Type |
-|--------------|------------|-------------|---------|
-| `GM` | `MemorySpace.GM` | Global memory | `!pto.ptr<T, gm>` |
-| `MAT` | `MemorySpace.MAT` | L1 buffer (cbuf) | `!pto.ptr<T, mat>` |
-| `LEFT` | `MemorySpace.LEFT` | L0A left-operand buffer | `!pto.ptr<T, left>` |
-| `RIGHT` | `MemorySpace.RIGHT` | L0B right-operand buffer | `!pto.ptr<T, right>` |
-| `ACC` | `MemorySpace.ACC` | L0C accumulator buffer | `!pto.ptr<T, acc>` |
-| `BIAS` | `MemorySpace.BIAS` | Bias table | `!pto.ptr<T, bias>` |
-| `UB` | `MemorySpace.UB` | Unified buffer (Vector side) | `!pto.ptr<T, ub>` |
+| Address Space | Enum Value | Canonical IR Type | Legacy ptr alias | Description |
+|--------------|------------|-------------------|------------------|-------------|
+| `GM` | `MemorySpace.GM` | `!pto.ptr<T, gm>` | - | Global memory |
+| `MAT` | `MemorySpace.MAT` | `!pto.ptr<T, l1>` | `mat` | L1 buffer (cbuf) |
+| `LEFT` | `MemorySpace.LEFT` | `!pto.ptr<T, l0a>` | `left` | L0A left-operand buffer |
+| `RIGHT` | `MemorySpace.RIGHT` | `!pto.ptr<T, l0b>` | `right` | L0B right-operand buffer |
+| `ACC` | `MemorySpace.ACC` | `!pto.ptr<T, l0c>` | `acc` | L0C accumulator buffer |
+| `BIAS` | `MemorySpace.BIAS` | `!pto.ptr<T, bt>` | `bias` | Bias table |
+| `UB` | `MemorySpace.UB` | `!pto.ptr<T, ub>` | `vec` | Unified buffer (Vector side) |
 
 ## Shared Infrastructure
 
@@ -43,9 +46,9 @@ Cube operations reuse general tile and pointer facilities documented elsewhere:
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `lhs` | `pto.ptr<T, left>` | L0A left operand |
-| `rhs` | `pto.ptr<T, right>` | L0B right operand |
-| `dst` | `pto.ptr<U, acc>` | L0C accumulator destination |
+| `lhs` | `pto.ptr<T, l0a>` | L0A left operand |
+| `rhs` | `pto.ptr<T, l0b>` | L0B right operand |
+| `dst` | `pto.ptr<U, l0c>` | L0C accumulator destination |
 | `m` | `int` | M dimension size |
 | `n` | `int` | N dimension size |
 | `k` | `int` | K dimension size |
@@ -53,9 +56,9 @@ Cube operations reuse general tile and pointer facilities documented elsewhere:
 | `disable_gemv` | `bool` | GEMV disable control |
 
 **Constraints**:
-- `lhs` must be in `left` address space.
-- `rhs` must be in `right` address space.
-- `dst` must be in `acc` address space.
+- `lhs` must be in `l0a` address space.
+- `rhs` must be in `l0b` address space.
+- `dst` must be in `l0c` address space.
 
 **Example**:
 ```python
@@ -88,12 +91,12 @@ pto.mad_acc(l0a, l0b, l0c, 16, 16, 64, unit_flag_ctrl=2)
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `bias` | `pto.ptr<U, bias>` | Bias table pointer |
+| `bias` | `pto.ptr<U, bt>` | Bias table pointer |
 
 Other parameters are the same as `pto.mad`.
 
 **Constraints**:
-- `bias` must be in `bias` address space.
+- `bias` must be in `bt` address space.
 
 **Example**:
 ```python
@@ -144,21 +147,21 @@ pto.mad_mx(l0a, l0b, l0c, 16, 16, 64)
 
 #### `pto.cube_load(src: PtrType, dst: PtrType, len_burst: int, *, nburst: tuple[int, int, int] = (1, 0, 0), loops: list[tuple[int, int, int]] | None = None) -> None`
 
-**Description**: Structured GM-to-L1 (`cbuf` / `mat`) data movement wrapper. Lowers
+**Description**: Structured GM-to-L1 (`cbuf` / `l1`) data movement wrapper. Lowers
 to loop/stride setup plus `pto.copy_gm_to_cbuf`.
 
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `src` | `pto.ptr<T, gm>` | Global memory source pointer |
-| `dst` | `pto.ptr<T, mat>` | L1 (cbuf) destination pointer |
+| `dst` | `pto.ptr<T, l1>` | L1 (cbuf) destination pointer |
 | `len_burst` | `int` | Burst length in bytes |
 | `nburst` | `tuple[int, int, int]` | `(count, src_stride, dst_stride)` |
 | `loops` | `list[tuple[int, int, int]]` or `None` | Optional nested loop params, each `(count_i, src_stride_i, dst_stride_i)` |
 
 **Constraints**:
 - `src` must be in `gm` address space.
-- `dst` must be in `mat` address space.
+- `dst` must be in `l1` address space.
 
 **Example**:
 ```python
@@ -176,7 +179,7 @@ pto.cube_load(a_ptr, l1_a.as_ptr(), 16, nburst=(1, 0, 0))
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `src` | `pto.ptr<T, mat>` | L1 source pointer |
+| `src` | `pto.ptr<T, l1>` | L1 source pointer |
 | `dst` | `pto.ptr<T, ub>` | UB destination pointer |
 | `len_burst` | `int` | Burst length in bytes |
 | `nburst` | `tuple[int, int, int]` | `(count, src_stride, dst_stride)` |
@@ -201,7 +204,7 @@ Lowers to `set_mte2_nz_para` plus `copy_gm_to_cbuf_multi_nd2nz` or
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `src` | `pto.ptr<T, gm>` | Global memory source pointer |
-| `dst` | `pto.ptr<T, mat>` | L1 destination pointer |
+| `dst` | `pto.ptr<T, l1>` | L1 destination pointer |
 | `mode` | `pto.FractalMode` | `pto.FractalMode.ND2NZ` or `pto.FractalMode.DN2NZ` |
 | `shape` | `tuple[int, int]` | `(n_value, d_value)` |
 | `src_layout` | `tuple[int, int]` | `(inner_stride, outer_stride)` |
@@ -210,7 +213,7 @@ Lowers to `set_mte2_nz_para` plus `copy_gm_to_cbuf_multi_nd2nz` or
 
 **Constraints**:
 - `src` must be in `gm` address space.
-- `dst` must be in `mat` address space.
+- `dst` must be in `l1` address space.
 
 **Example**:
 ```python
@@ -230,8 +233,8 @@ pto.cube_load_frac(a_ptr, l1_a.as_ptr(), pto.FractalMode.ND2NZ,
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `src` | `pto.ptr<T, mat>` | L1 source pointer |
-| `dst` | `pto.ptr<U, bias>` | Bias table destination pointer |
+| `src` | `pto.ptr<T, l1>` | L1 source pointer |
+| `dst` | `pto.ptr<U, bt>` | Bias table destination pointer |
 | `len_burst` | `int` | Burst length in bytes |
 | `nburst` | `tuple[int, int, int]` | `(count, src_gap, dst_gap)` |
 
@@ -254,14 +257,14 @@ pto.bias_load(l1_bias.as_ptr(), bt.as_ptr(), 16, nburst=(1, 0, 0))
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `src` | `pto.ptr<T, mat>` | L1 source pointer |
-| `dst` | `pto.ptr<T, left>` | L0A destination pointer |
+| `src` | `pto.ptr<T, l1>` | L1 source pointer |
+| `dst` | `pto.ptr<T, l0a>` | L0A destination pointer |
 | `m` | `int` | M dimension size |
 | `k` | `int` | K dimension size |
 
 **Constraints**:
-- `src` must be in `mat` address space.
-- `dst` must be in `left` address space.
+- `src` must be in `l1` address space.
+- `dst` must be in `l0a` address space.
 
 **Example**:
 ```python
@@ -279,14 +282,14 @@ pto.left_load(l1_a.as_ptr(), l0a.as_ptr(), 16, 64)
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `src` | `pto.ptr<T, mat>` | L1 source pointer |
-| `dst` | `pto.ptr<T, right>` | L0B destination pointer |
+| `src` | `pto.ptr<T, l1>` | L1 source pointer |
+| `dst` | `pto.ptr<T, l0b>` | L0B destination pointer |
 | `k` | `int` | K dimension size |
 | `n` | `int` | N dimension size |
 
 **Constraints**:
-- `src` must be in `mat` address space.
-- `dst` must be in `right` address space.
+- `src` must be in `l1` address space.
+- `dst` must be in `l0b` address space.
 
 **Example**:
 ```python
@@ -321,13 +324,13 @@ pto.right_load(l1_b.as_ptr(), l0b.as_ptr(), 64, 16)
 
 #### `pto.acc_store(src: PtrType, dst: PtrType, m: int, n: int, src_stride: int, dst_stride: int, *, mode: pto.FractalMode = pto.FractalMode.NZ2ND, loop0_src_stride: int | None = None, split: int | None = None, loop3: tuple[int, int, int] | None = None) -> None`
 
-**Description**: Structured L0C (`acc`) to L1 (`cbuf`) writeback wrapper.
+**Description**: Structured L0C (`l0c`) to L1 (`cbuf`) writeback wrapper.
 
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `src` | `pto.ptr<T, acc>` | L0C source pointer |
-| `dst` | `pto.ptr<T, mat>` | L1 (cbuf) destination pointer |
+| `src` | `pto.ptr<T, l0c>` | L0C source pointer |
+| `dst` | `pto.ptr<T, l1>` | L1 (cbuf) destination pointer |
 | `m` | `int` | M dimension size |
 | `n` | `int` | N dimension size |
 | `src_stride` | `int` | Source stride |
@@ -357,12 +360,12 @@ pto.acc_store(l0c.as_ptr(), l1_out.as_ptr(),
 
 #### `pto.acc_store_gm(src: PtrType, dst: PtrType, m: int, n: int, src_stride: int, dst_stride: int, *, sid: int = 0, l2_cache_ctrl: int = 0, mode: pto.FractalMode = pto.FractalMode.NZ2ND, loop0_src_stride: int | None = None, split: int | None = None, loop3: tuple[int, int, int] | None = None) -> None`
 
-**Description**: Structured L0C (`acc`) to GM writeback wrapper.
+**Description**: Structured L0C (`l0c`) to GM writeback wrapper.
 
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `src` | `pto.ptr<T, acc>` | L0C source pointer |
+| `src` | `pto.ptr<T, l0c>` | L0C source pointer |
 | `dst` | `pto.ptr<T, gm>` | GM destination pointer |
 | `sid` | `int` | Stream ID |
 | `l2_cache_ctrl` | `int` | L2 cache control |
@@ -380,12 +383,12 @@ pto.acc_store_gm(l0c.as_ptr(), c_ptr, 16, 16, 16, 16, mode=pto.FractalMode.NZ2ND
 
 #### `pto.acc_store_ub(src: PtrType, dst: PtrType, m: int, n: int, src_stride: int, dst_stride: int, *, dual_dst_mode: int = 0, sub_blockid: int = 0, mode: pto.FractalMode = pto.FractalMode.NZ2ND, loop0_src_stride: int | None = None, channel_split_en: int | None = None, loop3: tuple[int, int, int] | None = None) -> None`
 
-**Description**: Structured L0C (`acc`) to UB writeback wrapper.
+**Description**: Structured L0C (`l0c`) to UB writeback wrapper.
 
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `src` | `pto.ptr<T, acc>` | L0C source pointer |
+| `src` | `pto.ptr<T, l0c>` | L0C source pointer |
 | `dst` | `pto.ptr<T, ub>` | UB destination pointer |
 | `dual_dst_mode` | `int` | Dual destination mode |
 | `sub_blockid` | `int` | Sub-block ID |
@@ -407,20 +410,20 @@ pto.acc_store_ub(l0c.as_ptr(), ub_out.as_ptr(),
 
 | Data Flow | Operation | Src Space | Dst Space |
 |-----------|-----------|-----------|-----------|
-| GM → L1 | `pto.cube_load` | gm | mat |
-| GM → L1 (fractal) | `pto.cube_load_frac` | gm | mat |
-| L1 → UB | `pto.cube_store` | mat | ub |
-| L1 → L0A | `pto.left_load` | mat | left |
-| L1 → L0B | `pto.right_load` | mat | right |
-| L1 → L0A (MX) | `pto.left_load_mx` | mat | left |
-| L1 → L0B (MX) | `pto.right_load_mx` | mat | right |
-| L1 → Bias | `pto.bias_load` | mat | bias |
-| L0A×L0B → L0C | `pto.mad` | left, right | acc |
-| L0A×L0B → L0C (acc) | `pto.mad_acc` | left, right | acc |
-| L0A×L0B+Bias → L0C | `pto.mad_bias` | left, right, bias | acc |
-| L0C → L1 | `pto.acc_store` | acc | mat |
-| L0C → GM | `pto.acc_store_gm` | acc | gm |
-| L0C → UB | `pto.acc_store_ub` | acc | ub |
+| GM → L1 | `pto.cube_load` | gm | l1 |
+| GM → L1 (fractal) | `pto.cube_load_frac` | gm | l1 |
+| L1 → UB | `pto.cube_store` | l1 | ub |
+| L1 → L0A | `pto.left_load` | l1 | l0a |
+| L1 → L0B | `pto.right_load` | l1 | l0b |
+| L1 → L0A (MX) | `pto.left_load_mx` | l1 | l0a |
+| L1 → L0B (MX) | `pto.right_load_mx` | l1 | l0b |
+| L1 → Bias | `pto.bias_load` | l1 | bt |
+| L0A×L0B → L0C | `pto.mad` | l0a, l0b | l0c |
+| L0A×L0B → L0C (acc) | `pto.mad_acc` | l0a, l0b | l0c |
+| L0A×L0B+Bias → L0C | `pto.mad_bias` | l0a, l0b, bt | l0c |
+| L0C → L1 | `pto.acc_store` | l0c | l1 |
+| L0C → GM | `pto.acc_store_gm` | l0c | gm |
+| L0C → UB | `pto.acc_store_ub` | l0c | ub |
 
 ### MX Variants
 

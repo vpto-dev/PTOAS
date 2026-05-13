@@ -10,12 +10,12 @@
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
   func.func @mad_integer_sat_invalid(
-      %lhs: !pto.ptr<i8, left>,
-      %rhs: !pto.ptr<i8, right>,
-      %dst: !pto.ptr<i32, acc>) attributes {pto.aicore} {
+      %lhs: !pto.ptr<i8, l0a>,
+      %rhs: !pto.ptr<i8, l0b>,
+      %dst: !pto.ptr<i32, l0c>) attributes {pto.aicore} {
     %c16 = arith.constant 16 : i64
     pto.mad %lhs, %rhs, %dst, %c16, %c16, %c16 sat
-      : !pto.ptr<i8, left>, !pto.ptr<i8, right>, !pto.ptr<i32, acc>, i64, i64, i64
+      : !pto.ptr<i8, l0a>, !pto.ptr<i8, l0b>, !pto.ptr<i32, l0c>, i64, i64, i64
     return
   }
 }

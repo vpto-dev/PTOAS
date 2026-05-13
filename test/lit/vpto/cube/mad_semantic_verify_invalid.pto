@@ -10,12 +10,12 @@
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
   func.func @mad_mixed_hif8_invalid(
-      %lhs: !pto.ptr<!pto.hif8, left>,
-      %rhs: !pto.ptr<f8E4M3FN, right>,
-      %dst: !pto.ptr<f32, acc>) attributes {pto.aicore} {
+      %lhs: !pto.ptr<!pto.hif8, l0a>,
+      %rhs: !pto.ptr<f8E4M3FN, l0b>,
+      %dst: !pto.ptr<f32, l0c>) attributes {pto.aicore} {
     %c16 = arith.constant 16 : i64
     pto.mad %lhs, %rhs, %dst, %c16, %c16, %c16
-      : !pto.ptr<!pto.hif8, left>, !pto.ptr<f8E4M3FN, right>, !pto.ptr<f32, acc>, i64, i64, i64
+      : !pto.ptr<!pto.hif8, l0a>, !pto.ptr<f8E4M3FN, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
     return
   }
 }

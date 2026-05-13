@@ -21,7 +21,7 @@ PTOAS 目标硬件包含两种独立的计算单元：
 ### 1.2 当前状态
 
 - **Vector DSL**：已有完整的 `@vkernel` 装饰器 + `pto.vecscope` / `pto.strict_vecscope` 作用域机制，支持 basic/advanced 两层 API 面
-- **Cube IR**：VPTO bridge 层指令（`pto.cube_load`、`pto.mad`、`pto.acc_store` 等）已在 IR 层完整定义，有 lowering 和 LLVM 发射支持
+- **Cube IR**：VPTO bridge 层指令（`pto.mte_gm_l1`、`pto.mad`、`pto.mte_l0c_l1` 等）已在 IR 层完整定义，有 lowering 和 LLVM 发射支持
 - **缺失环节**：没有对应的 Python DSL 前端，程序员无法用 Python 写出 Cube 指令
 
 ### 1.3 设计目标
@@ -143,11 +143,11 @@ PartitionTensorView (GM, 写回)
 | 地址空间 | 枚举值 | 说明 | 对应 IR 类型 |
 |----------|--------|------|-------------|
 | `GM` | `MemorySpace.GM` | 全局内存 | `!pto.ptr<T, gm>` |
-| `MAT` | `MemorySpace.MAT` | L1 缓冲区 (cbuf) | `!pto.ptr<T, mat>` |
-| `LEFT` | `MemorySpace.LEFT` | L0A 矩阵左乘数缓冲区 | `!pto.ptr<T, left>` |
-| `RIGHT` | `MemorySpace.RIGHT` | L0B 矩阵右乘数缓冲区 | `!pto.ptr<T, right>` |
-| `ACC` | `MemorySpace.ACC` | L0C 累加器缓冲区 | `!pto.ptr<T, acc>` |
-| `BIAS` | `MemorySpace.BIAS` | Bias 表 | `!pto.ptr<T, bias>` |
+| `MAT` | `MemorySpace.MAT` | L1 缓冲区 (cbuf) | `!pto.ptr<T, l1>` |
+| `LEFT` | `MemorySpace.LEFT` | L0A 矩阵左乘数缓冲区 | `!pto.ptr<T, l0a>` |
+| `RIGHT` | `MemorySpace.RIGHT` | L0B 矩阵右乘数缓冲区 | `!pto.ptr<T, l0b>` |
+| `ACC` | `MemorySpace.ACC` | L0C 累加器缓冲区 | `!pto.ptr<T, l0c>` |
+| `BIAS` | `MemorySpace.BIAS` | Bias 表 | `!pto.ptr<T, bt>` |
 | `UB` | `MemorySpace.UB` | 统一缓冲区 (Vector 侧) | `!pto.ptr<T, ub>` |
 
 ### 3.3 缓冲区分配接口
@@ -234,18 +234,18 @@ def gemm(a_tv: PartitionTensorView,  # GM 输入 A [M, K]
     l0c = pto.Tile([M, N], pto.f32, MemorySpace.ACC)
 
     # 4. GM -> L1 数据搬运
-    pto.cube_load(a_ptr, l1_a.as_ptr(), K, nburst=(1, 0, 0))
-    pto.cube_load(b_ptr, l1_b.as_ptr(), N, nburst=(1, 0, 0))
+    pto.mte_gm_l1(a_ptr, l1_a.as_ptr(), K, nburst=(1, 0, 0))
+    pto.mte_gm_l1(b_ptr, l1_b.as_ptr(), N, nburst=(1, 0, 0))
 
     # 5. L1 -> L0 数据搬运
-    pto.left_load(l1_a.as_ptr(), l0a.as_ptr(), M, K)
-    pto.right_load(l1_b.as_ptr(), l0b.as_ptr(), K, N)
+    pto.mte_l1_l0a(l1_a.as_ptr(), l0a.as_ptr(), M, K)
+    pto.mte_l1_l0b(l1_b.as_ptr(), l0b.as_ptr(), K, N)
 
     # 6. 矩阵乘法
     pto.mad(l0a.as_ptr(), l0b.as_ptr(), l0c.as_ptr(), M, N, K)
 
     # 7. L0C -> GM 结果写回
-    pto.acc_store_gm(l0c.as_ptr(), c_ptr, M, N,
+    pto.mte_l0c_gm(l0c.as_ptr(), c_ptr, M, N,
                      src_stride=N, dst_stride=N,
                      mode="nz2nd")
 ```
@@ -295,28 +295,28 @@ MX micro-scaling 变体，参数与对应非 MX 版本相同，用于 `f8` 等 M
 
 ### 4.2 数据搬运操作
 
-#### `pto.cube_load` — GM → L1 (cbuf)
+#### `pto.mte_gm_l1` — GM → L1 (cbuf)
 
 ```python
-pto.cube_load(src: pto.ptr<T, gm>, dst: pto.ptr<T, mat>,
+pto.mte_gm_l1(src: pto.ptr<T, gm>, dst: pto.ptr<T, mat>,
               len_burst: int,
               nburst: tuple[int, int, int] = (1, 0, 0),
               loops: list[tuple[int, int, int]] | None = None)
 ```
 
-#### `pto.cube_store` — L1 (cbuf) → UB
+#### `pto.mte_l1_ub` — L1 (cbuf) → UB
 
 ```python
-pto.cube_store(src: pto.ptr<T, mat>, dst: pto.ptr<T, ub>,
+pto.mte_l1_ub(src: pto.ptr<T, mat>, dst: pto.ptr<T, ub>,
                len_burst: int,
                nburst: tuple[int, int, int] = (1, 0, 0),
                loops: list[tuple[int, int, int]] | None = None)
 ```
 
-#### `pto.cube_load_frac` — 分形加载 (nd2nz / dn2nz)
+#### `pto.mte_gm_l1_frac` — 分形加载 (nd2nz / dn2nz)
 
 ```python
-pto.cube_load_frac(src: pto.ptr<T, gm>, dst: pto.ptr<T, mat>,
+pto.mte_gm_l1_frac(src: pto.ptr<T, gm>, dst: pto.ptr<T, mat>,
                    mode: str,  # "nd2nz" | "dn2nz"
                    shape: tuple[int, int],          # (n_value, d_value)
                    src_layout: tuple[int, int],     # (inner_stride, outer_stride)
@@ -324,38 +324,38 @@ pto.cube_load_frac(src: pto.ptr<T, gm>, dst: pto.ptr<T, mat>,
                    ctrl: tuple[int, bool])          # (l2_cache_ctrl, smallc0_en)
 ```
 
-#### `pto.bias_load` — L1 (cbuf) → Bias 表
+#### `pto.mte_l1_bt` — L1 (cbuf) → Bias 表
 
 ```python
-pto.bias_load(src: pto.ptr<T, mat>, dst: pto.ptr<U, bias>,
+pto.mte_l1_bt(src: pto.ptr<T, mat>, dst: pto.ptr<U, bias>,
               len_burst: int,
               nburst: tuple[int, int, int] = (1, 0, 0))
 ```
 
-#### `pto.left_load` — L1 (cbuf) → L0A
+#### `pto.mte_l1_l0a` — L1 (cbuf) → L0A
 
 ```python
-pto.left_load(src: pto.ptr<T, mat>, dst: pto.ptr<T, left>,
+pto.mte_l1_l0a(src: pto.ptr<T, mat>, dst: pto.ptr<T, left>,
               m: int, k: int)
 ```
 
-#### `pto.right_load` — L1 (cbuf) → L0B
+#### `pto.mte_l1_l0b` — L1 (cbuf) → L0B
 
 ```python
-pto.right_load(src: pto.ptr<T, mat>, dst: pto.ptr<T, right>,
+pto.mte_l1_l0b(src: pto.ptr<T, mat>, dst: pto.ptr<T, right>,
                k: int, n: int)
 ```
 
-#### `pto.left_load_mx` / `pto.right_load_mx`
+#### `pto.mte_l1_l0a_mx` / `pto.mte_l1_l0b_mx`
 
 MX 模式 L1→L0A/L0B 搬运，参数同非 MX 版本。
 
 ### 4.3 结果写回操作
 
-#### `pto.acc_store` — L0C (acc) → L1 (cbuf)
+#### `pto.mte_l0c_l1` — L0C (acc) → L1 (cbuf)
 
 ```python
-pto.acc_store(src: pto.ptr<T, acc>, dst: pto.ptr<T, mat>,
+pto.mte_l0c_l1(src: pto.ptr<T, acc>, dst: pto.ptr<T, mat>,
               m: int, n: int,
               src_stride: int, dst_stride: int,
               mode: str = "nz2nd",  # "nz2nd" | "nz2dn" | "nz2nz"
@@ -364,10 +364,10 @@ pto.acc_store(src: pto.ptr<T, acc>, dst: pto.ptr<T, mat>,
               loop3: tuple[int, int, int] | None = None)
 ```
 
-#### `pto.acc_store_gm` — L0C (acc) → GM
+#### `pto.mte_l0c_gm` — L0C (acc) → GM
 
 ```python
-pto.acc_store_gm(src: pto.ptr<T, acc>, dst: pto.ptr<T, gm>,
+pto.mte_l0c_gm(src: pto.ptr<T, acc>, dst: pto.ptr<T, gm>,
                  m: int, n: int,
                  src_stride: int, dst_stride: int,
                  sid: int = 0, l2_cache_ctrl: int = 0,
@@ -377,10 +377,10 @@ pto.acc_store_gm(src: pto.ptr<T, acc>, dst: pto.ptr<T, gm>,
                  loop3: tuple[int, int, int] | None = None)
 ```
 
-#### `pto.acc_store_ub` — L0C (acc) → UB
+#### `pto.mte_l0c_ub` — L0C (acc) → UB
 
 ```python
-pto.acc_store_ub(src: pto.ptr<T, acc>, dst: pto.ptr<T, ub>,
+pto.mte_l0c_ub(src: pto.ptr<T, acc>, dst: pto.ptr<T, ub>,
                  m: int, n: int,
                  src_stride: int, dst_stride: int,
                  dual_dst_mode: int = 0, sub_blockid: int = 0,
@@ -421,15 +421,15 @@ def gemm_template(a_tv: PartitionTensorView, b_tv: PartitionTensorView,
     l0b = pto.Tile([K, N], pto.f16, MemorySpace.RIGHT)
     l0c = pto.Tile([M, N], pto.f32, MemorySpace.ACC)
 
-    pto.cube_load(a_ptr, l1_a.as_ptr(), K, nburst=(1, 0, 0))
-    pto.cube_load(b_ptr, l1_b.as_ptr(), N, nburst=(1, 0, 0))
-    pto.left_load(l1_a.as_ptr(), l0a.as_ptr(), M, K)
-    pto.right_load(l1_b.as_ptr(), l0b.as_ptr(), K, N)
+    pto.mte_gm_l1(a_ptr, l1_a.as_ptr(), K, nburst=(1, 0, 0))
+    pto.mte_gm_l1(b_ptr, l1_b.as_ptr(), N, nburst=(1, 0, 0))
+    pto.mte_l1_l0a(l1_a.as_ptr(), l0a.as_ptr(), M, K)
+    pto.mte_l1_l0b(l1_b.as_ptr(), l0b.as_ptr(), K, N)
 
     # 模板槽位：根据 selected_op 自动替换为 mad 或 mad_acc
     pto.tpl("compute", l0a.as_ptr(), l0b.as_ptr(), l0c.as_ptr(), M, N, K)
 
-    pto.acc_store_gm(l0c.as_ptr(), c_ptr, M, N,
+    pto.mte_l0c_gm(l0c.as_ptr(), c_ptr, M, N,
                      src_stride=N, dst_stride=N, mode="nz2nd")
 ```
 
@@ -521,16 +521,16 @@ def gemm(a_tv: PartitionTensorView,   # [M, K] in GM
     l0c = pto.Tile([M, N], pto.f32, MemorySpace.ACC)
 
     # Data movement
-    pto.cube_load(a_ptr, l1_a.as_ptr(), K, nburst=(1, 0, 0))
-    pto.cube_load(b_ptr, l1_b.as_ptr(), N, nburst=(1, 0, 0))
-    pto.left_load(l1_a.as_ptr(), l0a.as_ptr(), M, K)
-    pto.right_load(l1_b.as_ptr(), l0b.as_ptr(), K, N)
+    pto.mte_gm_l1(a_ptr, l1_a.as_ptr(), K, nburst=(1, 0, 0))
+    pto.mte_gm_l1(b_ptr, l1_b.as_ptr(), N, nburst=(1, 0, 0))
+    pto.mte_l1_l0a(l1_a.as_ptr(), l0a.as_ptr(), M, K)
+    pto.mte_l1_l0b(l1_b.as_ptr(), l0b.as_ptr(), K, N)
 
     # Compute
     pto.mad(l0a.as_ptr(), l0b.as_ptr(), l0c.as_ptr(), M, N, K)
 
     # Writeback
-    pto.acc_store_gm(l0c.as_ptr(), c_ptr, M, N,
+    pto.mte_l0c_gm(l0c.as_ptr(), c_ptr, M, N,
                      src_stride=N, dst_stride=N, mode="nz2nd")
 ```
 
@@ -563,17 +563,17 @@ def gemm_splitk(a_tv: PartitionTensorView,   # [M, K]
         a_k = pto.addptr(a_ptr, k_off)
         b_k = pto.addptr(b_ptr, k_off)
 
-        pto.cube_load(a_k, l1_a.as_ptr(), BASEK, nburst=(1, 0, 0))
-        pto.cube_load(b_k, l1_b.as_ptr(), N, nburst=(1, 0, 0))
-        pto.left_load(l1_a.as_ptr(), l0a.as_ptr(), M, BASEK)
-        pto.right_load(l1_b.as_ptr(), l0b.as_ptr(), BASEK, N)
+        pto.mte_gm_l1(a_k, l1_a.as_ptr(), BASEK, nburst=(1, 0, 0))
+        pto.mte_gm_l1(b_k, l1_b.as_ptr(), N, nburst=(1, 0, 0))
+        pto.mte_l1_l0a(l1_a.as_ptr(), l0a.as_ptr(), M, BASEK)
+        pto.mte_l1_l0b(l1_b.as_ptr(), l0b.as_ptr(), BASEK, N)
 
         if k_step == 0:
             pto.mad(l0a.as_ptr(), l0b.as_ptr(), l0c.as_ptr(), M, N, BASEK)
         else:
             pto.mad_acc(l0a.as_ptr(), l0b.as_ptr(), l0c.as_ptr(), M, N, BASEK)
 
-    pto.acc_store_gm(l0c.as_ptr(), c_ptr, M, N,
+    pto.mte_l0c_gm(l0c.as_ptr(), c_ptr, M, N,
                      src_stride=N, dst_stride=N, mode="nz2nd")
 ```
 
@@ -601,16 +601,16 @@ def gemm_bias(a_tv: PartitionTensorView, b_tv: PartitionTensorView,
     l0c = pto.Tile([M, N], pto.f32, MemorySpace.ACC)
     bt = pto.Tile([1, N], pto.f32, MemorySpace.BIAS)
 
-    pto.cube_load(a_ptr, l1_a.as_ptr(), K, nburst=(1, 0, 0))
-    pto.cube_load(b_ptr, l1_b.as_ptr(), N, nburst=(1, 0, 0))
-    pto.cube_load(bias_ptr, l1_bias.as_ptr(), N, nburst=(1, 0, 0))
-    pto.bias_load(l1_bias.as_ptr(), bt.as_ptr(), N, nburst=(1, 0, 0))
+    pto.mte_gm_l1(a_ptr, l1_a.as_ptr(), K, nburst=(1, 0, 0))
+    pto.mte_gm_l1(b_ptr, l1_b.as_ptr(), N, nburst=(1, 0, 0))
+    pto.mte_gm_l1(bias_ptr, l1_bias.as_ptr(), N, nburst=(1, 0, 0))
+    pto.mte_l1_bt(l1_bias.as_ptr(), bt.as_ptr(), N, nburst=(1, 0, 0))
 
-    pto.left_load(l1_a.as_ptr(), l0a.as_ptr(), M, K)
-    pto.right_load(l1_b.as_ptr(), l0b.as_ptr(), K, N)
+    pto.mte_l1_l0a(l1_a.as_ptr(), l0a.as_ptr(), M, K)
+    pto.mte_l1_l0b(l1_b.as_ptr(), l0b.as_ptr(), K, N)
     pto.mad_bias(l0a.as_ptr(), l0b.as_ptr(), l0c.as_ptr(), bt.as_ptr(), M, N, K)
 
-    pto.acc_store_gm(l0c.as_ptr(), c_ptr, M, N,
+    pto.mte_l0c_gm(l0c.as_ptr(), c_ptr, M, N,
                      src_stride=N, dst_stride=N, mode="nz2nd")
 ```
 
@@ -634,18 +634,18 @@ def gemm_frac(a_tv: PartitionTensorView, b_tv: PartitionTensorView,
     l0b = pto.Tile([K, N], pto.f16, MemorySpace.RIGHT)
     l0c = pto.Tile([M, N], pto.f32, MemorySpace.ACC)
 
-    pto.cube_load_frac(a_ptr, l1_a.as_ptr(), "nd2nz",
+    pto.mte_gm_l1_frac(a_ptr, l1_a.as_ptr(), "nd2nz",
                        shape=(M, K),
                        src_layout=(K,),
                        dst_group=(1, 0, 0, 0),
                        ctrl=(0, False))
-    pto.cube_load(b_ptr, l1_b.as_ptr(), N, nburst=(1, 0, 0))
+    pto.mte_gm_l1(b_ptr, l1_b.as_ptr(), N, nburst=(1, 0, 0))
 
-    pto.left_load(l1_a.as_ptr(), l0a.as_ptr(), M, K)
-    pto.right_load(l1_b.as_ptr(), l0b.as_ptr(), K, N)
+    pto.mte_l1_l0a(l1_a.as_ptr(), l0a.as_ptr(), M, K)
+    pto.mte_l1_l0b(l1_b.as_ptr(), l0b.as_ptr(), K, N)
     pto.mad(l0a.as_ptr(), l0b.as_ptr(), l0c.as_ptr(), M, N, K)
 
-    pto.acc_store_gm(l0c.as_ptr(), c_ptr, M, N,
+    pto.mte_l0c_gm(l0c.as_ptr(), c_ptr, M, N,
                      src_stride=N, dst_stride=N, mode="nz2nd")
 ```
 
@@ -679,18 +679,18 @@ def gemm_frac(a_tv: PartitionTensorView, b_tv: PartitionTensorView,
 - `@ckernel` 装饰器
 - `pto.Tile` 构造器 + `.as_ptr()` 缓冲区分配和指针获取
 - `pto.mad` / `pto.mad_acc` / `pto.mad_bias`
-- `pto.cube_load` / `pto.cube_store`
-- `pto.left_load` / `pto.right_load`
-- `pto.acc_store_gm`
+- `pto.mte_gm_l1` / `pto.mte_l1_ub`
+- `pto.mte_l1_l0a` / `pto.mte_l1_l0b`
+- `pto.mte_l0c_gm`
 - 模板槽位 `pto.tpl()` 基本支持
 
 ### Phase 2：完整 bridge 面
 
 - `pto.mad_mx` / `pto.mad_mx_acc` / `pto.mad_mx_bias`
-- `pto.cube_load_frac`
-- `pto.bias_load`
-- `pto.left_load_mx` / `pto.right_load_mx`
-- `pto.acc_store` / `pto.acc_store_ub`
+- `pto.mte_gm_l1_frac`
+- `pto.mte_l1_bt`
+- `pto.mte_l1_l0a_mx` / `pto.mte_l1_l0b_mx`
+- `pto.mte_l0c_l1` / `pto.mte_l0c_ub`
 - `pto.addptr` 指针偏移
 
 ### Phase 3：高级特性

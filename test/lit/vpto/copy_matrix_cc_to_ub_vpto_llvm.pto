@@ -14,10 +14,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %c16_i64 = arith.constant 16 : i64
     %c68720525568_i64 = arith.constant 68720525568 : i64
 
-    %src = pto.castptr %c0_i64 : i64 -> !pto.ptr<f32, acc>
+    %src = pto.castptr %c0_i64 : i64 -> !pto.ptr<f32, l0c>
     %dst = pto.castptr %c0_i64 : i64 -> !pto.ptr<f32, ub>
     pto.copy_matrix_cc_to_ub %src, %dst, %c68720525568_i64, %c16_i64
-      : !pto.ptr<f32, acc>, !pto.ptr<f32, ub>, i64, i64
+      : !pto.ptr<f32, l0c>, !pto.ptr<f32, ub>, i64, i64
     return
   }
 }

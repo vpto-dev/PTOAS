@@ -11,21 +11,21 @@
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
   func.func @mad_semantic_to_raw(
-      %lhs: !pto.ptr<f32, left>,
-      %rhs: !pto.ptr<f32, right>,
-      %dst: !pto.ptr<f32, acc>,
-      %lhs_hif8: !pto.ptr<!pto.hif8, left>,
-      %rhs_hif8: !pto.ptr<!pto.hif8, right>,
-      %bias: !pto.ptr<f32, bias>) attributes {pto.aicore} {
+      %lhs: !pto.ptr<f32, l0a>,
+      %rhs: !pto.ptr<f32, l0b>,
+      %dst: !pto.ptr<f32, l0c>,
+      %lhs_hif8: !pto.ptr<!pto.hif8, l0a>,
+      %rhs_hif8: !pto.ptr<!pto.hif8, l0b>,
+      %bias: !pto.ptr<f32, bt>) attributes {pto.aicore} {
     %c16 = arith.constant 16 : i64
     pto.mad %lhs, %rhs, %dst, %c16, %c16, %c16 unit_flag(check_only) disable_gemv sat tf32_mode(round_even) n_dir
-      : !pto.ptr<f32, left>, !pto.ptr<f32, right>, !pto.ptr<f32, acc>, i64, i64, i64
+      : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
     pto.mad_acc %lhs, %rhs, %dst, %c16, %c16, %c16 unit_flag(check_and_set) nosat tf32_mode(round_away)
-      : !pto.ptr<f32, left>, !pto.ptr<f32, right>, !pto.ptr<f32, acc>, i64, i64, i64
+      : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
     pto.mad_bias %lhs, %rhs, %dst, %bias, %c16, %c16, %c16
-      : !pto.ptr<f32, left>, !pto.ptr<f32, right>, !pto.ptr<f32, acc>, !pto.ptr<f32, bias>, i64, i64, i64
+      : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, !pto.ptr<f32, bt>, i64, i64, i64
     pto.mad %lhs_hif8, %rhs_hif8, %dst, %c16, %c16, %c16
-      : !pto.ptr<!pto.hif8, left>, !pto.ptr<!pto.hif8, right>, !pto.ptr<f32, acc>, i64, i64, i64
+      : !pto.ptr<!pto.hif8, l0a>, !pto.ptr<!pto.hif8, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
     return
   }
 }
@@ -34,7 +34,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 // SEMANTIC: pto.mad {{.*}} unit_flag(check_only) disable_gemv sat tf32_mode(round_even) n_dir
 // SEMANTIC: pto.mad_acc {{.*}} unit_flag(check_and_set) nosat tf32_mode(round_away)
 // SEMANTIC: pto.mad_bias
-// SEMANTIC: pto.mad {{.*}}!pto.ptr<!pto.hif8, left>, !pto.ptr<!pto.hif8, right>
+// SEMANTIC: pto.mad {{.*}}!pto.ptr<!pto.hif8, l0a>, !pto.ptr<!pto.hif8, l0b>
 
 // EXPAND-LABEL: func.func @mad_semantic_to_raw(
 // EXPAND-DAG: %[[BIT45:.*]] = arith.constant 45 : i64
@@ -61,5 +61,5 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 // EXPAND: pto.set_ctrl %[[CTRL2]] : i64
 // EXPAND: %[[CTRL3:.*]] = pto.get_ctrl : i64
 // EXPAND: pto.sbitset1 {{.*}}, %[[BIT45]]
-// EXPAND: pto.mad_raw {{.*}}!pto.ptr<!pto.hif8, left>, !pto.ptr<!pto.hif8, right>
+// EXPAND: pto.mad_raw {{.*}}!pto.ptr<!pto.hif8, l0a>, !pto.ptr<!pto.hif8, l0b>
 // EXPAND: pto.set_ctrl %[[CTRL3]] : i64

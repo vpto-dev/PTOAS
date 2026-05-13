@@ -9,7 +9,7 @@
 
 # case: micro-op/vector-load-store/dma-copy-rearrange
 # family: micro-op/vector-load-store
-# target_ops: pto.copy_gm_to_ubuf, pto.dma_copy, pto.copy_ubuf_to_gm
+# target_ops: pto.copy_gm_to_ubuf, pto.mte_ub_ub, pto.copy_ubuf_to_gm
 # scenarios: i16, ub-rearrange, permute-4x16-rows
 
 import argparse

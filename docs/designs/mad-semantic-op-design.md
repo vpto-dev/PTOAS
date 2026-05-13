@@ -52,7 +52,7 @@ pto.mad %lhs, %rhs, %dst, %m, %n, %k
   (sat | nosat)?
   tf32_mode(round_even | round_away)?
   n_dir?
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, i64, i64, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, i64, i64, i64
 ```
 
 语义：
@@ -70,7 +70,7 @@ pto.mad_acc %lhs, %rhs, %dst, %m, %n, %k
   (sat | nosat)?
   tf32_mode(round_even | round_away)?
   n_dir?
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, i64, i64, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, i64, i64, i64
 ```
 
 语义：
@@ -88,8 +88,8 @@ pto.mad_bias %lhs, %rhs, %dst, %bias, %m, %n, %k
   (sat | nosat)?
   tf32_mode(round_even | round_away)?
   n_dir?
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>,
-    !pto.ptr<..., bias>, i64, i64, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>,
+    !pto.ptr<..., bt>, i64, i64, i64
 ```
 
 语义：
@@ -106,7 +106,7 @@ pto.mad_mx %lhs, %rhs, %dst, %m, %n, %k
   disable_gemv?
   (sat | nosat)?
   n_dir?
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, i64, i64, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, i64, i64, i64
 ```
 
 语义：
@@ -129,7 +129,7 @@ pto.mad_mx_acc %lhs, %rhs, %dst, %m, %n, %k
   disable_gemv?
   (sat | nosat)?
   n_dir?
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, i64, i64, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, i64, i64, i64
 ```
 
 语义：
@@ -146,8 +146,8 @@ pto.mad_mx_bias %lhs, %rhs, %dst, %bias, %m, %n, %k
   disable_gemv?
   (sat | nosat)?
   n_dir?
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>,
-    !pto.ptr<..., bias>, i64, i64, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>,
+    !pto.ptr<..., bt>, i64, i64, i64
 ```
 
 语义：
@@ -173,18 +173,18 @@ raw op 只承载底层 MAD/MMAD 指令本身，不承载 `CTRL` 语义。
 
 ```mlir
 pto.mad_raw %lhs, %rhs, %dst, %xt
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, i64
 
 pto.mad_bias_raw %lhs, %rhs, %dst, %bias, %xt
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>,
-    !pto.ptr<..., bias>, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>,
+    !pto.ptr<..., bt>, i64
 
 pto.mad_mx_raw %lhs, %rhs, %dst, %xt
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, i64
 
 pto.mad_mx_bias_raw %lhs, %rhs, %dst, %bias, %xt
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>,
-    !pto.ptr<..., bias>, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>,
+    !pto.ptr<..., bt>, i64
 ```
 
 `mad_acc` 和 `mad_mx_acc` 不需要单独 raw op；它们使用
@@ -471,7 +471,7 @@ pto.mad %lhs, %rhs, %dst, %m, %n, %k
   (sat | nosat)?
   tf32_mode(round_even | round_away)?
   n_dir?
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, i64, i64, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, i64, i64, i64
 
 pto.mad_acc %lhs, %rhs, %dst, %m, %n, %k
   unit_flag(check_only | check_and_set)?
@@ -479,7 +479,7 @@ pto.mad_acc %lhs, %rhs, %dst, %m, %n, %k
   (sat | nosat)?
   tf32_mode(round_even | round_away)?
   n_dir?
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, i64, i64, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, i64, i64, i64
 
 pto.mad_bias %lhs, %rhs, %dst, %bias, %m, %n, %k
   unit_flag(check_only | check_and_set)?
@@ -487,44 +487,44 @@ pto.mad_bias %lhs, %rhs, %dst, %bias, %m, %n, %k
   (sat | nosat)?
   tf32_mode(round_even | round_away)?
   n_dir?
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, !pto.ptr<..., bias>, i64, i64, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, !pto.ptr<..., bt>, i64, i64, i64
 
 pto.mad_mx %lhs, %rhs, %dst, %m, %n, %k
   unit_flag(check_only | check_and_set)?
   disable_gemv?
   (sat | nosat)?
   n_dir?
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, i64, i64, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, i64, i64, i64
 
 pto.mad_mx_acc %lhs, %rhs, %dst, %m, %n, %k
   unit_flag(check_only | check_and_set)?
   disable_gemv?
   (sat | nosat)?
   n_dir?
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, i64, i64, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, i64, i64, i64
 
 pto.mad_mx_bias %lhs, %rhs, %dst, %bias, %m, %n, %k
   unit_flag(check_only | check_and_set)?
   disable_gemv?
   (sat | nosat)?
   n_dir?
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, !pto.ptr<..., bias>, i64, i64, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, !pto.ptr<..., bt>, i64, i64, i64
 ```
 
 raw op：
 
 ```mlir
 pto.mad_raw %lhs, %rhs, %dst, %xt
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, i64
 
 pto.mad_bias_raw %lhs, %rhs, %dst, %bias, %xt
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, !pto.ptr<..., bias>, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, !pto.ptr<..., bt>, i64
 
 pto.mad_mx_raw %lhs, %rhs, %dst, %xt
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, i64
 
 pto.mad_mx_bias_raw %lhs, %rhs, %dst, %bias, %xt
-  : !pto.ptr<..., left>, !pto.ptr<..., right>, !pto.ptr<..., acc>, !pto.ptr<..., bias>, i64
+  : !pto.ptr<..., l0a>, !pto.ptr<..., l0b>, !pto.ptr<..., l0c>, !pto.ptr<..., bt>, i64
 ```
 
 这版设计的核心变化是：

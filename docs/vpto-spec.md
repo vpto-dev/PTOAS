@@ -141,14 +141,14 @@ The PTO micro Instruction enforces a strict memory hierarchy. The Unified Buffer
 └─────────────────────────────────────────────┘
 ```
 
-1. **GM → UB**: DMA transfer via MTE2 (`pto.dma_load`)
+1. **GM → UB**: DMA transfer via MTE2 (`pto.mte_gm_ub`)
 2. **UB → vreg**: Vector Load instructions (`pto.vlds`, `pto.vldsx2`, etc.)
 3. **vreg → vreg**: Compute instructions (`pto.vadd`, `pto.vmul`, etc.)
 4. **vreg → UB**: Vector Store instructions (`pto.vsts`, `pto.vstsx2`, etc.)
-5. **UB → GM**: DMA transfer via MTE3 (`pto.dma_store`)
+5. **UB → GM**: DMA transfer via MTE3 (`pto.mte_ub_gm`)
 
-The grouped DMA surface in this specification covers `pto.dma_load`
-(GM→UB), `pto.dma_store` (UB→GM), and `pto.dma_copy`
+The grouped DMA surface in this specification covers `pto.mte_gm_ub`
+(GM→UB), `pto.mte_ub_gm` (UB→GM), and `pto.mte_ub_ub` / `pto.mte_ub_l1`
 (UB→UB or UB→CBUF).
 
 **Load/Store Access Patterns**:
@@ -250,7 +250,7 @@ pto.strict_vecscope(%ub, %ub_out, %lane) {
 ### Example: VecScope
 
 ```mlir
-pto.dma_load %7, %2, %c0_i64, %c128_i64
+pto.mte_gm_ub %7, %2, %c0_i64, %c128_i64
   nburst(%c32_i64, %c128_i64, %c128_i64)
   : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64
 
@@ -268,7 +268,7 @@ pto.vecscope {
 
 pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
 pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
-pto.dma_store %8, %14, %c128_i64
+pto.mte_ub_gm %8, %14, %c128_i64
   nburst(%c32_i64, %c128_i64, %c128_i64)
   : !pto.ptr<f32, ub>, !pto.ptr<f32, gm>, i64, i64, i64, i64
 ```
@@ -507,8 +507,8 @@ STEP 2 - GM -> L1 (cbuf): NDtoNZ fractal repack
 
 STEP 3 - L1 -> L0A / L0B
 --------------------------
- L0A: cbuf K1 M1 M0 K0 --left_load-->  L0A K1 M1 M0 K0  (FRACTAL_NZ on A5)
- L0B: cbuf K1 N1 K0 N0 --right_load--> L0B K1 N1 N0 K0  (FRACTAL_ZN, K0 innermost)
+ L0A: cbuf K1 M1 M0 K0 --mte_l1_l0a-->  L0A K1 M1 M0 K0  (FRACTAL_NZ on A5)
+ L0B: cbuf K1 N1 K0 N0 --mte_l1_l0b--> L0B K1 N1 N0 K0  (FRACTAL_ZN, K0 innermost)
 
  Why transpose at L1->L0B and not at GM->L1?
  --------------------------------------------
@@ -549,11 +549,11 @@ Full pipeline summary
 ----------------------
   GM (ND)          L1/cbuf (NZ)            L0A/B (NZ)          L0C (NZ)    GM (ND)
 
-  A[M,K] --cube_load_frac/cube_load--> K1 M1 M0 K0 --left_load-->  K1 M1 M0 K0 -+
+  A[M,K] --mte_gm_l1_frac/mte_gm_l1--> K1 M1 M0 K0 --mte_l1_l0a-->  K1 M1 M0 K0 -+
                                                                +-MAD-> N1 M1 M0 N0 --> C[M,N]
-  B[K,N] --cube_load_frac/cube_load--> K1 N1 K0 N0 --right_load--> K1 N1 N0 K0 -+
+  B[K,N] --mte_gm_l1_frac/mte_gm_l1--> K1 N1 K0 N0 --mte_l1_l0b--> K1 N1 N0 K0 -+
                                  ^
-                      transpose as part of right_load when requested
+                      transpose as part of mte_l1_l0b when requested
                       NOT at GM->L1
 ```
 
@@ -1139,7 +1139,7 @@ This section provides a categorized overview of all PTO micro Instruction operat
 | # | Group | Description | Count | Details |
 |---|-------|-------------|-------|---------|
 | 1 | [Pipeline Sync](isa/micro-isa/01-pipeline-sync.md) | Intra-core pipeline synchronization | 5 | `pto.set_flag`, `pto.wait_flag`, `pto.pipe_barrier`, `pto.get_buf`, `pto.rls_buf` |
-| 2 | [DMA Copy Programming](isa/micro-isa/02-dma-copy.md) | Public DMA transfer interface between GM↔UB and UB↔UB | 3 | `pto.dma_load`, `pto.dma_store`, `pto.dma_copy` |
+| 2 | [DMA Copy Programming](isa/micro-isa/02-dma-copy.md) | Public DMA transfer interface between GM↔UB, UB→UB, and UB→L1 | 4 | `pto.mte_gm_ub`, `pto.mte_ub_gm`, `pto.mte_ub_ub`, `pto.mte_ub_l1` |
 | 3 | [Vector Load/Store](isa/micro-isa/03-vector-load-store.md) | UB↔vreg data movement with various access patterns | ~20 | `pto.vlds`, `pto.vldsx2`, `pto.vgather2`, `pto.vsts`, `pto.vstsx2`, `pto.vscatter`, etc. |
 | 4 | [Predicate Load/Store](isa/micro-isa/04-predicate-load-store.md) | UB↔mask register movement | 5 | `pto.plds`, `pto.pldi`, `pto.psts`, `pto.psti`, `pto.pstu` |
 | 5 | [Materialization & Predicate Ops](isa/micro-isa/05-materialization-predicate.md) | Scalar broadcast, predicate generation and manipulation | ~17 | `pto.vbr`, `pto.vdup`, `pto.pset_b*`, `pto.pge_b*`, `pto.plt_b*`, `pto.ppack`, `pto.punpack`, `pto.pnot`, `pto.psel`, etc. |
@@ -1153,7 +1153,7 @@ This section provides a categorized overview of all PTO micro Instruction operat
 | 13 | [DSA/SFU Ops](isa/micro-isa/13-dsa-sfu-ops.md) | Specialized ops, index generation, and sorting helpers | 10 | `pto.vlrelu`, `pto.vprelu`, `pto.vexpdif`, `pto.vaxpy`, `pto.vmull`, `pto.vmula`, `pto.vci`, `pto.vbitsort`, `pto.vmrgsort4`, `pto.get_vms4_sr` |
 | 14 | [Arith (Shared MLIR Dialect)](isa/micro-isa/14-shared-arith.md) | Full scalar `arith` surface used around PTO ops; the companion page lists categories and representative examples | all scalar ops | `arith.constant`, `arith.addi`, `arith.addf`, `arith.cmpi`, `arith.cmpf`, `arith.select`, `arith.index_cast`, `arith.extsi`, `arith.trunci`, `arith.andi`, `arith.shli`, etc. |
 | 15 | [SCF (Shared MLIR Dialect)](isa/micro-isa/15-shared-scf.md) | Structured loops, branches, and loop-carried state around PTO regions | 5 | `scf.for`, `scf.if`, `scf.while`, `scf.condition`, `scf.yield` |
-| 16 | [Cube Matrix Multiply (MAT)](isa/micro-isa/16-cube-matmul.md) | GM↔L1 (`cbuf`) staging, L1 (`cbuf`)↔UB/BT/FB side moves, L1→L0A/L0B loads, L0C (`acc`) matmul, and FIXPIPE MTE writeback | 19 | `pto.cube_load`, `pto.cube_store`, `pto.cube_load_frac`, `pto.bias_load`, `pto.fp_load`, `pto.left_load`, `pto.right_load`, `pto.left_load_mx`, `pto.right_load_mx`, `pto.mad`, `pto.mad_acc`, `pto.mad_bias`, `pto.mad_mx`, `pto.mad_mx_acc`, `pto.mad_mx_bias`, `pto.acc_store`, `pto.acc_store_gm`, `pto.acc_store_ub` |
+| 16 | [Cube Matrix Multiply](isa/micro-isa/16-cube-matmul.md) | GM↔L1 (`l1`/cbuf) staging, L1 (`l1`)↔UB/BT/FB side moves, L1→L0A/L0B loads, L0C (`l0c`) matmul, and FIXPIPE MTE writeback | 19 | `pto.mte_gm_l1`, `pto.mte_l1_ub`, `pto.mte_gm_l1_frac`, `pto.mte_l1_bt`, `pto.mte_l1_fb`, `pto.mte_l1_l0a`, `pto.mte_l1_l0b`, `pto.mte_l1_l0a_mx`, `pto.mte_l1_l0b_mx`, `pto.mad`, `pto.mad_acc`, `pto.mad_bias`, `pto.mad_mx`, `pto.mad_mx_acc`, `pto.mad_mx_bias`, `pto.mte_l0c_l1`, `pto.mte_l0c_gm`, `pto.mte_l0c_ub` |
 
 ---
 
@@ -1163,15 +1163,15 @@ This section provides a categorized overview of all PTO micro Instruction operat
 
 | Operation | Group | Description |
 |-----------|-------|-------------|
-| GM→UB DMA | 2 | `pto.dma_load` |
-| UB→GM DMA | 2 | `pto.dma_store` |
-| UB→UB / UB→CBUF copy | 2 | `pto.dma_copy` |
-| GM→L1 | 16 | `pto.cube_load`, `pto.cube_load_frac` |
-| L1→UB | 16 | `pto.cube_store` |
-| L1→BT | 16 | `pto.bias_load` |
-| L1→FB | 16 | `pto.fp_load` |
-| L1→L0A / L1→L0B | 16 | `pto.left_load`, `pto.right_load`, `pto.left_load_mx`, `pto.right_load_mx` |
-| L0C→L1 / GM / UB (FIXPIPE MTE) | 16 | `pto.acc_store`, `pto.acc_store_gm`, `pto.acc_store_ub` |
+| GM→UB DMA | 2 | `pto.mte_gm_ub` |
+| UB→GM DMA | 2 | `pto.mte_ub_gm` |
+| UB→UB / UB→L1 copy | 2 | `pto.mte_ub_ub`, `pto.mte_ub_l1` |
+| GM→L1 | 16 | `pto.mte_gm_l1`, `pto.mte_gm_l1_frac` |
+| L1→UB | 16 | `pto.mte_l1_ub` |
+| L1→BT | 16 | `pto.mte_l1_bt` |
+| L1→FB | 16 | `pto.mte_l1_fb` |
+| L1→L0A / L1→L0B | 16 | `pto.mte_l1_l0a`, `pto.mte_l1_l0b`, `pto.mte_l1_l0a_mx`, `pto.mte_l1_l0b_mx` |
+| L0C→L1 / GM / UB (FIXPIPE MTE) | 16 | `pto.mte_l0c_l1`, `pto.mte_l0c_gm`, `pto.mte_l0c_ub` |
 | Contiguous Load | 3 | `pto.vlds` with `NORM` dist |
 | Broadcast Load | 3 | `pto.vlds` with `BRC` family dist |
 | Gather | 3 | `pto.vgather2`, `pto.vgatherb` |
@@ -1223,24 +1223,24 @@ Group 14 covers the full scalar `arith` surface. The rows below list common PTO 
 
 ### Cube Operation Surface
 
-- `pto.bias_load`
-- `pto.fp_load`
-- `pto.cube_load`
-- `pto.cube_load_frac`
-- `pto.cube_store`
-- `pto.left_load`
-- `pto.right_load`
-- `pto.left_load_mx`
-- `pto.right_load_mx`
+- `pto.mte_l1_bt`
+- `pto.mte_l1_fb`
+- `pto.mte_gm_l1`
+- `pto.mte_gm_l1_frac`
+- `pto.mte_l1_ub`
+- `pto.mte_l1_l0a`
+- `pto.mte_l1_l0b`
+- `pto.mte_l1_l0a_mx`
+- `pto.mte_l1_l0b_mx`
 - `pto.mad`
 - `pto.mad_acc`
 - `pto.mad_bias`
 - `pto.mad_mx`
 - `pto.mad_mx_acc`
 - `pto.mad_mx_bias`
-- `pto.acc_store`
-- `pto.acc_store_gm`
-- `pto.acc_store_ub`
+- `pto.mte_l0c_l1`
+- `pto.mte_l0c_gm`
+- `pto.mte_l0c_ub`
 
 ---
 

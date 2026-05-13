@@ -948,10 +948,10 @@ public:
   }
 };
 
-struct ExpandDmaLoadPattern : public OpRewritePattern<pto::DmaLoadOp> {
-  using OpRewritePattern<pto::DmaLoadOp>::OpRewritePattern;
+struct ExpandDmaLoadPattern : public OpRewritePattern<pto::MteGmUbOp> {
+  using OpRewritePattern<pto::MteGmUbOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::DmaLoadOp op,
+  LogicalResult matchAndRewrite(pto::MteGmUbOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
@@ -1010,10 +1010,10 @@ struct ExpandDmaLoadPattern : public OpRewritePattern<pto::DmaLoadOp> {
   }
 };
 
-struct ExpandDmaStorePattern : public OpRewritePattern<pto::DmaStoreOp> {
-  using OpRewritePattern<pto::DmaStoreOp>::OpRewritePattern;
+struct ExpandDmaStorePattern : public OpRewritePattern<pto::MteUbGmOp> {
+  using OpRewritePattern<pto::MteUbGmOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::DmaStoreOp op,
+  LogicalResult matchAndRewrite(pto::MteUbGmOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
@@ -1060,40 +1060,36 @@ struct ExpandDmaStorePattern : public OpRewritePattern<pto::DmaStoreOp> {
   }
 };
 
-struct ExpandDmaCopyPattern : public OpRewritePattern<pto::DmaCopyOp> {
-  using OpRewritePattern<pto::DmaCopyOp>::OpRewritePattern;
+struct ExpandMteUbUbPattern : public OpRewritePattern<pto::MteUbUbOp> {
+  using OpRewritePattern<pto::MteUbUbOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::DmaCopyOp op,
+  LogicalResult matchAndRewrite(pto::MteUbUbOp op,
                                 PatternRewriter &rewriter) const override {
-    auto destinationType =
-        dyn_cast<pto::PtrType>(materializeBufferPointer(op.getDestination(),
-                                                        rewriter, op.getLoc())
-                                   .getType());
-    if (!destinationType)
-      return rewriter.notifyMatchFailure(op, "expected pointer-like destination");
     Value zero = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 64);
-    switch (destinationType.getMemorySpace().getAddressSpace()) {
-    case pto::AddressSpace::VEC:
-      rewriter.replaceOpWithNewOp<pto::CopyUbufToUbufOp>(
-          op, op.getSource(), op.getDestination(), zero, op.getNBurst(),
-          op.getLenBurst(), op.getSrcStride(), op.getDstStride());
-      return success();
-    case pto::AddressSpace::MAT:
-      rewriter.replaceOpWithNewOp<pto::CopyUbufToCbufOp>(
-          op, op.getSource(), op.getDestination(), zero, op.getNBurst(),
-          op.getLenBurst(), op.getSrcStride(), op.getDstStride());
-      return success();
-    default:
-      return rewriter.notifyMatchFailure(
-          op, "expected dma_copy destination in UB or MAT address space");
-    }
+    rewriter.replaceOpWithNewOp<pto::CopyUbufToUbufOp>(
+        op, op.getSource(), op.getDestination(), zero, op.getNBurst(),
+        op.getLenBurst(), op.getSrcStride(), op.getDstStride());
+    return success();
   }
 };
 
-struct ExpandCubeLoadPattern : public OpRewritePattern<pto::CubeLoadOp> {
-  using OpRewritePattern<pto::CubeLoadOp>::OpRewritePattern;
+struct ExpandMteUbL1Pattern : public OpRewritePattern<pto::MteUbL1Op> {
+  using OpRewritePattern<pto::MteUbL1Op>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::CubeLoadOp op,
+  LogicalResult matchAndRewrite(pto::MteUbL1Op op,
+                                PatternRewriter &rewriter) const override {
+    Value zero = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 64);
+    rewriter.replaceOpWithNewOp<pto::CopyUbufToCbufOp>(
+        op, op.getSource(), op.getDestination(), zero, op.getNBurst(),
+        op.getLenBurst(), op.getSrcStride(), op.getDstStride());
+    return success();
+  }
+};
+
+struct ExpandCubeLoadPattern : public OpRewritePattern<pto::MteGmL1Op> {
+  using OpRewritePattern<pto::MteGmL1Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(pto::MteGmL1Op op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
@@ -1152,10 +1148,10 @@ struct ExpandCubeLoadPattern : public OpRewritePattern<pto::CubeLoadOp> {
   }
 };
 
-struct ExpandCubeStorePattern : public OpRewritePattern<pto::CubeStoreOp> {
-  using OpRewritePattern<pto::CubeStoreOp>::OpRewritePattern;
+struct ExpandCubeStorePattern : public OpRewritePattern<pto::MteL1UbOp> {
+  using OpRewritePattern<pto::MteL1UbOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::CubeStoreOp op,
+  LogicalResult matchAndRewrite(pto::MteL1UbOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
@@ -1180,10 +1176,10 @@ struct ExpandCubeStorePattern : public OpRewritePattern<pto::CubeStoreOp> {
   }
 };
 
-struct ExpandBiasLoadPattern : public OpRewritePattern<pto::BiasLoadOp> {
-  using OpRewritePattern<pto::BiasLoadOp>::OpRewritePattern;
+struct ExpandBiasLoadPattern : public OpRewritePattern<pto::MteL1BtOp> {
+  using OpRewritePattern<pto::MteL1BtOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::BiasLoadOp op,
+  LogicalResult matchAndRewrite(pto::MteL1BtOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     auto sourceType = dyn_cast<pto::PtrType>(
@@ -1200,10 +1196,10 @@ struct ExpandBiasLoadPattern : public OpRewritePattern<pto::BiasLoadOp> {
   }
 };
 
-struct ExpandFpLoadPattern : public OpRewritePattern<pto::FpLoadOp> {
-  using OpRewritePattern<pto::FpLoadOp>::OpRewritePattern;
+struct ExpandFpLoadPattern : public OpRewritePattern<pto::MteL1FbOp> {
+  using OpRewritePattern<pto::MteL1FbOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::FpLoadOp op,
+  LogicalResult matchAndRewrite(pto::MteL1FbOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value source = materializeBufferPointer(op.getSource(), rewriter, loc);
@@ -1219,10 +1215,10 @@ struct ExpandFpLoadPattern : public OpRewritePattern<pto::FpLoadOp> {
   }
 };
 
-struct ExpandCubeLoadFracPattern : public OpRewritePattern<pto::CubeLoadFracOp> {
-  using OpRewritePattern<pto::CubeLoadFracOp>::OpRewritePattern;
+struct ExpandCubeLoadFracPattern : public OpRewritePattern<pto::MteGmL1FracOp> {
+  using OpRewritePattern<pto::MteGmL1FracOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::CubeLoadFracOp op,
+  LogicalResult matchAndRewrite(pto::MteGmL1FracOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
@@ -1254,10 +1250,10 @@ struct ExpandCubeLoadFracPattern : public OpRewritePattern<pto::CubeLoadFracOp> 
   }
 };
 
-struct ExpandLeftLoadPattern : public OpRewritePattern<pto::LeftLoadOp> {
-  using OpRewritePattern<pto::LeftLoadOp>::OpRewritePattern;
+struct ExpandLeftLoadPattern : public OpRewritePattern<pto::MteL1L0aOp> {
+  using OpRewritePattern<pto::MteL1L0aOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::LeftLoadOp op,
+  LogicalResult matchAndRewrite(pto::MteL1L0aOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     auto sourceType = dyn_cast<pto::PtrType>(op.getSource().getType());
@@ -1279,10 +1275,10 @@ struct ExpandLeftLoadPattern : public OpRewritePattern<pto::LeftLoadOp> {
   }
 };
 
-struct ExpandRightLoadPattern : public OpRewritePattern<pto::RightLoadOp> {
-  using OpRewritePattern<pto::RightLoadOp>::OpRewritePattern;
+struct ExpandRightLoadPattern : public OpRewritePattern<pto::MteL1L0bOp> {
+  using OpRewritePattern<pto::MteL1L0bOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::RightLoadOp op,
+  LogicalResult matchAndRewrite(pto::MteL1L0bOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     auto sourceType = dyn_cast<pto::PtrType>(op.getSource().getType());
@@ -1304,10 +1300,10 @@ struct ExpandRightLoadPattern : public OpRewritePattern<pto::RightLoadOp> {
   }
 };
 
-struct ExpandLeftLoadMxPattern : public OpRewritePattern<pto::LeftLoadMxOp> {
-  using OpRewritePattern<pto::LeftLoadMxOp>::OpRewritePattern;
+struct ExpandLeftLoadMxPattern : public OpRewritePattern<pto::MteL1L0aMxOp> {
+  using OpRewritePattern<pto::MteL1L0aMxOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::LeftLoadMxOp op,
+  LogicalResult matchAndRewrite(pto::MteL1L0aMxOp op,
                                 PatternRewriter &rewriter) const override {
     rewriter.create<pto::LoadCbufToCaMxOp>(op.getLoc(), op.getSource(),
                                            op.getDestination(), op.getM(),
@@ -1317,10 +1313,10 @@ struct ExpandLeftLoadMxPattern : public OpRewritePattern<pto::LeftLoadMxOp> {
   }
 };
 
-struct ExpandRightLoadMxPattern : public OpRewritePattern<pto::RightLoadMxOp> {
-  using OpRewritePattern<pto::RightLoadMxOp>::OpRewritePattern;
+struct ExpandRightLoadMxPattern : public OpRewritePattern<pto::MteL1L0bMxOp> {
+  using OpRewritePattern<pto::MteL1L0bMxOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::RightLoadMxOp op,
+  LogicalResult matchAndRewrite(pto::MteL1L0bMxOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     auto sourceType = dyn_cast<pto::PtrType>(op.getSource().getType());
@@ -1355,10 +1351,10 @@ struct ExpandRightLoadMxPattern : public OpRewritePattern<pto::RightLoadMxOp> {
   }
 };
 
-struct ExpandAccStorePattern : public OpRewritePattern<pto::AccStoreOp> {
-  using OpRewritePattern<pto::AccStoreOp>::OpRewritePattern;
+struct ExpandAccStorePattern : public OpRewritePattern<pto::MteL0cL1Op> {
+  using OpRewritePattern<pto::MteL0cL1Op>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::AccStoreOp op,
+  LogicalResult matchAndRewrite(pto::MteL0cL1Op op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value zero = getI64Constant(loc, rewriter, 0);
@@ -1447,10 +1443,10 @@ struct ExpandAccStorePattern : public OpRewritePattern<pto::AccStoreOp> {
   }
 };
 
-struct ExpandAccStoreGmPattern : public OpRewritePattern<pto::AccStoreGmOp> {
-  using OpRewritePattern<pto::AccStoreGmOp>::OpRewritePattern;
+struct ExpandAccStoreGmPattern : public OpRewritePattern<pto::MteL0cGmOp> {
+  using OpRewritePattern<pto::MteL0cGmOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::AccStoreGmOp op,
+  LogicalResult matchAndRewrite(pto::MteL0cGmOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value zero = getI64Constant(loc, rewriter, 0);
@@ -1538,10 +1534,10 @@ struct ExpandAccStoreGmPattern : public OpRewritePattern<pto::AccStoreGmOp> {
   }
 };
 
-struct ExpandAccStoreUbPattern : public OpRewritePattern<pto::AccStoreUbOp> {
-  using OpRewritePattern<pto::AccStoreUbOp>::OpRewritePattern;
+struct ExpandAccStoreUbPattern : public OpRewritePattern<pto::MteL0cUbOp> {
+  using OpRewritePattern<pto::MteL0cUbOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::AccStoreUbOp op,
+  LogicalResult matchAndRewrite(pto::MteL0cUbOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value zero = getI64Constant(loc, rewriter, 0);
@@ -1651,7 +1647,7 @@ struct VPTOExpandWrapperOpsPass
 
     RewritePatternSet patterns(&getContext());
     patterns.add<ExpandUvldPattern, ExpandDmaLoadPattern, ExpandDmaStorePattern,
-                 ExpandDmaCopyPattern, ExpandCubeLoadPattern,
+                 ExpandMteUbUbPattern, ExpandMteUbL1Pattern, ExpandCubeLoadPattern,
                  ExpandCubeStorePattern, ExpandBiasLoadPattern,
                  ExpandFpLoadPattern,
                  ExpandCubeLoadFracPattern, ExpandLeftLoadPattern,

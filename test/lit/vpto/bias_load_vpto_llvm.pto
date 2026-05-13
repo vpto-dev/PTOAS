@@ -5,11 +5,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %c0 = arith.constant 0 : i64
     %c2 = arith.constant 2 : i64
     %c4 = arith.constant 4 : i64
-    %src = pto.castptr %c0 : i64 -> !pto.ptr<f16, mat>
-    %dst = pto.castptr %c0 : i64 -> !pto.ptr<f32, bias>
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<f16, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<f32, bt>
 
-    pto.bias_load %src, %dst, %c4 nburst(%c2, %c0, %c0)
-      : !pto.ptr<f16, mat>, !pto.ptr<f32, bias>, i64, i64, i64, i64
+    pto.mte_l1_bt %src, %dst, %c4 nburst(%c2, %c0, %c0)
+      : !pto.ptr<f16, l1>, !pto.ptr<f32, bt>, i64, i64, i64, i64
     return
   }
 }

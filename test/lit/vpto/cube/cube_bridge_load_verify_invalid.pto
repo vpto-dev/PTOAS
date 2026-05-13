@@ -8,11 +8,11 @@ module attributes {"pto.target_arch" = "a5"} {
       %dst_left: memref<?xf16, #pto.address_space<left>>) {
     %c16_i64 = arith.constant 16 : i64
 
-    pto.left_load %src_gm, %dst_left, %c16_i64, %c16_i64
+    pto.mte_l1_l0a %src_gm, %dst_left, %c16_i64, %c16_i64
       : memref<?xf16, #pto.address_space<gm>>, memref<?xf16, #pto.address_space<left>>, i64, i64
 
     return
   }
 }
 
-// CHECK: error: 'pto.left_load' op requires MAT source
+// CHECK: error: 'pto.mte_l1_l0a' op requires MAT source

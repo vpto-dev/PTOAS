@@ -203,7 +203,7 @@ pto.copy_ubuf_to_ubuf %ub_src, %ub_dst,
     : !pto.ptr<T, ub>, !pto.ptr<T, ub>,
       i64, i64, i64, i64, i64
 ```
-- **semantics:** Raw UB→UB copy within Unified Buffer. `pto.dma_copy` uses the same operand contract.
+- **semantics:** Raw UB→UB copy within Unified Buffer. `pto.mte_ub_ub` uses the same operand contract.
 
 **Parameter Table:**
 

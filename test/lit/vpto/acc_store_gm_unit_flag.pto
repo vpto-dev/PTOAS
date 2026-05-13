@@ -10,24 +10,24 @@
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXPAND
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
-  func.func @acc_store_gm_unit_flag_probe(%src: !pto.ptr<f32, acc>,
+  func.func @acc_store_gm_unit_flag_probe(%src: !pto.ptr<f32, l0c>,
                                           %dst: !pto.ptr<f32, gm>) {
     %c0_i64 = arith.constant 0 : i64
     %c1_i64 = arith.constant 1 : i64
     %c16_i64 = arith.constant 16 : i64
 
-    pto.acc_store_gm %src, %dst, %c16_i64, %c16_i64, %c16_i64, %c16_i64, %c0_i64, %c0_i64,
+    pto.mte_l0c_gm %src, %dst, %c16_i64, %c16_i64, %c16_i64, %c16_i64, %c0_i64, %c0_i64,
       unit_flag(check_and_clear),
       nz2nd,
       loop3(%c1_i64, %c0_i64, %c16_i64)
-      : !pto.ptr<f32, acc>, !pto.ptr<f32, gm>, i64, i64, i64, i64, i64, i64, i64, i64, i64
+      : !pto.ptr<f32, l0c>, !pto.ptr<f32, gm>, i64, i64, i64, i64, i64, i64, i64, i64, i64
 
     return
   }
 }
 
 // ROUNDTRIP-LABEL: func.func @acc_store_gm_unit_flag_probe(
-// ROUNDTRIP: pto.acc_store_gm %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, unit_flag(check_and_clear), nz2nd, loop3(%{{.*}}, %{{.*}}, %{{.*}})
+// ROUNDTRIP: pto.mte_l0c_gm %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, unit_flag(check_and_clear), nz2nd, loop3(%{{.*}}, %{{.*}}, %{{.*}})
 
 // EXPAND-LABEL: func.func @acc_store_gm_unit_flag_probe(
 // EXPAND: %[[XT:.*]] = arith.constant 8808977924112 : i64

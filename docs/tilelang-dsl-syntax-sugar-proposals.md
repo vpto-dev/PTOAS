@@ -16,7 +16,7 @@ next_ptr = pto.addptr(ub_ptr, 4096)
 **Problem**: Users must manage byte offsets and memory spaces manually.
 
 ### 2. **Verbose Copy Operations**
-The `pto.copy_ubuf_to_ubuf` / `pto.dma_copy` operand contract is low-level:
+The `pto.copy_ubuf_to_ubuf` / `pto.mte_ub_ub` operand contract is low-level:
 - source pointer, destination pointer, `sid`
 - `n_burst`, `len_burst`, `src_gap`, `dst_gap`
 

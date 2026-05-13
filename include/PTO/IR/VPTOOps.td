@@ -271,7 +271,7 @@ def PTO_CopyGmToUbufOp : PTO_Op<"copy_gm_to_ubuf", [
   }];
 }
 
-def PTO_DmaLoadOp : PTO_Op<"dma_load", [
+def PTO_MteGmUbOp : PTO_Op<"mte_gm_ub", [
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
@@ -390,7 +390,32 @@ def PTO_CopyUbufToCbufOp : PTO_Op<"copy_ubuf_to_cbuf", [
   }];
 }
 
-def PTO_DmaCopyOp : PTO_Op<"dma_copy", [
+def PTO_MteUbUbOp : PTO_Op<"mte_ub_ub", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_BufferType:$source,
+    PTO_BufferType:$destination,
+    I64:$n_burst,
+    I64:$len_burst,
+    I64:$src_stride,
+    I64:$dst_stride
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $source `,` $destination `,` $len_burst
+    `nburst` `(` $n_burst `,` $src_stride `,` $dst_stride `)`
+    attr-dict `:` type($source) `,` type($destination) `,` type($n_burst) `,`
+    type($len_burst) `,` type($src_stride) `,`
+    type($dst_stride)
+  }];
+}
+
+def PTO_MteUbL1Op : PTO_Op<"mte_ub_l1", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -1870,7 +1895,7 @@ def PTO_CopyUbufToGmOp : PTO_Op<"copy_ubuf_to_gm", [
   }];
 }
 
-def PTO_DmaStoreOp : PTO_Op<"dma_store", [
+def PTO_MteUbGmOp : PTO_Op<"mte_ub_gm", [
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
@@ -1912,7 +1937,7 @@ def PTO_DmaStoreOp : PTO_Op<"dma_store", [
 
 // Cube bridge wrappers: fuse common register config sequences with the core
 // cube transfer/load/store ops, similar to dma_load/dma_store wrappers.
-def PTO_CubeLoadOp : PTO_Op<"cube_load", [
+def PTO_MteGmL1Op : PTO_Op<"mte_gm_l1", [
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
@@ -1952,7 +1977,7 @@ def PTO_CubeLoadOp : PTO_Op<"cube_load", [
   ];
 }
 
-def PTO_CubeStoreOp : PTO_Op<"cube_store", [
+def PTO_MteL1UbOp : PTO_Op<"mte_l1_ub", [
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
@@ -1992,7 +2017,7 @@ def PTO_CubeStoreOp : PTO_Op<"cube_store", [
   ];
 }
 
-def PTO_BiasLoadOp : PTO_Op<"bias_load", [
+def PTO_MteL1BtOp : PTO_Op<"mte_l1_bt", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -2019,7 +2044,7 @@ def PTO_BiasLoadOp : PTO_Op<"bias_load", [
   ];
 }
 
-def PTO_FpLoadOp : PTO_Op<"fp_load", [
+def PTO_MteL1FbOp : PTO_Op<"mte_l1_fb", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -2046,7 +2071,7 @@ def PTO_FpLoadOp : PTO_Op<"fp_load", [
   ];
 }
 
-def PTO_CubeLoadFracOp : PTO_Op<"cube_load_frac", [
+def PTO_MteGmL1FracOp : PTO_Op<"mte_gm_l1_frac", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -2083,7 +2108,7 @@ def PTO_CubeLoadFracOp : PTO_Op<"cube_load_frac", [
   ];
 }
 
-def PTO_LeftLoadOp : PTO_Op<"left_load", [
+def PTO_MteL1L0aOp : PTO_Op<"mte_l1_l0a", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -2104,7 +2129,7 @@ def PTO_LeftLoadOp : PTO_Op<"left_load", [
   }];
 }
 
-def PTO_RightLoadOp : PTO_Op<"right_load", [
+def PTO_MteL1L0bOp : PTO_Op<"mte_l1_l0b", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -2125,7 +2150,7 @@ def PTO_RightLoadOp : PTO_Op<"right_load", [
   }];
 }
 
-def PTO_LeftLoadMxOp : PTO_Op<"left_load_mx", [
+def PTO_MteL1L0aMxOp : PTO_Op<"mte_l1_l0a_mx", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -2145,7 +2170,7 @@ def PTO_LeftLoadMxOp : PTO_Op<"left_load_mx", [
   }];
 }
 
-def PTO_RightLoadMxOp : PTO_Op<"right_load_mx", [
+def PTO_MteL1L0bMxOp : PTO_Op<"mte_l1_l0b_mx", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -2165,7 +2190,7 @@ def PTO_RightLoadMxOp : PTO_Op<"right_load_mx", [
   }];
 }
 
-def PTO_AccStoreOp : PTO_Op<"acc_store", [
+def PTO_MteL0cL1Op : PTO_Op<"mte_l0c_l1", [
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
@@ -2199,7 +2224,7 @@ def PTO_AccStoreOp : PTO_Op<"acc_store", [
   let hasCustomAssemblyFormat = 1;
 }
 
-def PTO_AccStoreGmOp : PTO_Op<"acc_store_gm", [
+def PTO_MteL0cGmOp : PTO_Op<"mte_l0c_gm", [
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
@@ -2235,7 +2260,7 @@ def PTO_AccStoreGmOp : PTO_Op<"acc_store_gm", [
   let hasCustomAssemblyFormat = 1;
 }
 
-def PTO_AccStoreUbOp : PTO_Op<"acc_store_ub", [
+def PTO_MteL0cUbOp : PTO_Op<"mte_l0c_ub", [
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {

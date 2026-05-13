@@ -6,17 +6,17 @@ module attributes {pto.target_arch = "a5"} {
     %c0 = arith.constant 0 : i64
     %c1 = arith.constant 1 : i64
     %ub = pto.castptr %c0 : i64 -> !pto.ptr<i16, ub>
-    %mat = pto.castptr %c0 : i64 -> !pto.ptr<i16, mat>
+    %mat = pto.castptr %c0 : i64 -> !pto.ptr<i16, l1>
 
     pto.section.vector {
-      pto.dma_load %arg0, %ub, %c0, %c1
+      pto.mte_gm_ub %arg0, %ub, %c0, %c1
         nburst(%c1, %c1, %c1)
         : !pto.ptr<i16, gm>, !pto.ptr<i16, ub>, i64, i64, i64, i64, i64
     }
 
     pto.section.cube {
       pto.copy_ubuf_to_cbuf %ub, %mat, %c0, %c1, %c1, %c0, %c0
-        : !pto.ptr<i16, ub>, !pto.ptr<i16, mat>, i64, i64, i64, i64, i64
+        : !pto.ptr<i16, ub>, !pto.ptr<i16, l1>, i64, i64, i64, i64, i64
     }
 
     return

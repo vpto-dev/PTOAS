@@ -399,13 +399,19 @@ static std::optional<pto::AddressSpace> parsePtrAddressSpaceKeyword(StringRef ke
   return llvm::StringSwitch<std::optional<pto::AddressSpace>>(keyword)
       .Case("gm", pto::AddressSpace::GM)
       .Case("mat", pto::AddressSpace::MAT)
+      .Case("l1", pto::AddressSpace::MAT)
       .Case("left", pto::AddressSpace::LEFT)
+      .Case("l0a", pto::AddressSpace::LEFT)
       .Case("right", pto::AddressSpace::RIGHT)
+      .Case("l0b", pto::AddressSpace::RIGHT)
       .Case("acc", pto::AddressSpace::ACC)
+      .Case("l0c", pto::AddressSpace::ACC)
       .Case("vec", pto::AddressSpace::VEC)
       .Case("ub", pto::AddressSpace::VEC)
       .Case("bias", pto::AddressSpace::BIAS)
+      .Case("bt", pto::AddressSpace::BIAS)
       .Case("scaling", pto::AddressSpace::SCALING)
+      .Case("fb", pto::AddressSpace::SCALING)
       .Default(std::nullopt);
 }
 
@@ -415,19 +421,19 @@ static StringRef printPtrAddressSpaceKeyword(pto::AddressSpace space) {
   case pto::AddressSpace::Zero:
     return "gm";
   case pto::AddressSpace::MAT:
-    return "mat";
+    return "l1";
   case pto::AddressSpace::LEFT:
-    return "left";
+    return "l0a";
   case pto::AddressSpace::RIGHT:
-    return "right";
+    return "l0b";
   case pto::AddressSpace::ACC:
-    return "acc";
+    return "l0c";
   case pto::AddressSpace::VEC:
     return "ub";
   case pto::AddressSpace::BIAS:
-    return "bias";
+    return "bt";
   case pto::AddressSpace::SCALING:
-    return "scaling";
+    return "fb";
   default:
     return {};
   }
@@ -550,7 +556,7 @@ static void printSyncEventOpCommon(OpAsmPrinter &p, Operation *op,
       if (!parsed) {
         parser.emitError(parser.getCurrentLocation(),
                          "!pto.ptr address space must be one of "
-                         "`gm|mat|left|right|acc|vec|ub|bias|scaling`");
+                         "`gm|ub|mat|l1|left|l0a|right|l0b|acc|l0c|vec|bias|bt|scaling|fb`");
         return mlir::Type();
       }
       memorySpace = pto::AddressSpaceAttr::get(ctx, *parsed);
@@ -598,7 +604,7 @@ mlir::Type PtrType::parse(::mlir::AsmParser &parser) {
     if (!parsed) {
       parser.emitError(parser.getCurrentLocation(),
                        "!pto.ptr address space must be one of "
-                       "`gm|mat|left|right|acc|vec|ub|bias|scaling`");
+                       "`gm|ub|mat|l1|left|l0a|right|l0b|acc|l0c|vec|bias|bt|scaling|fb`");
       return {};
     }
     memorySpace = pto::AddressSpaceAttr::get(parser.getContext(), *parsed);

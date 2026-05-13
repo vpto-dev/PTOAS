@@ -2,8 +2,8 @@
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXPAND
 
 module attributes {"pto.target_arch" = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
-  func.func @acc_store_probe(%src: !pto.ptr<f32, acc>,
-                             %dst: !pto.ptr<f16, mat>) {
+  func.func @acc_store_probe(%src: !pto.ptr<f32, l0c>,
+                             %dst: !pto.ptr<f16, l1>) {
     %c0_i64 = arith.constant 0 : i64
     %c1_i64 = arith.constant 1 : i64
     %c16_i64 = arith.constant 16 : i64
@@ -11,14 +11,14 @@ module attributes {"pto.target_arch" = "a5", pto.kernel_kind = #pto.kernel_kind<
     %c1_f32 = arith.constant 1.000000e+00 : f32
     %c025_f32 = arith.constant 2.500000e-01 : f32
 
-    pto.acc_store %src, %dst, %c16_i64, %c16_i64, %c16_i64, %c32_i64,
+    pto.mte_l0c_l1 %src, %dst, %c16_i64, %c16_i64, %c16_i64, %c32_i64,
       unit_flag(check_only),
       pre_quant(%c1_f32, mode = qf322f16_pre_scalar),
       pre_relu(%c025_f32, mode = scalar_relu),
       nz2nd,
       loop3(%c1_i64, %c0_i64, %c32_i64),
       sat
-    : !pto.ptr<f32, acc>, !pto.ptr<f16, mat>, i64, i64, i64, i64, f32, f32,
+    : !pto.ptr<f32, l0c>, !pto.ptr<f16, l1>, i64, i64, i64, i64, f32, f32,
       i64, i64, i64
 
     return
@@ -26,7 +26,7 @@ module attributes {"pto.target_arch" = "a5", pto.kernel_kind = #pto.kernel_kind<
 }
 
 // ROUNDTRIP-LABEL: func.func @acc_store_probe(
-// ROUNDTRIP: pto.acc_store %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, unit_flag(check_only), pre_quant(%{{.*}}, mode = qf322f16_pre_scalar), pre_relu(%{{.*}}, mode = scalar_relu), nz2nd, loop3(%{{.*}}, %{{.*}}, %{{.*}}), sat
+// ROUNDTRIP: pto.mte_l0c_l1 %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, unit_flag(check_only), pre_quant(%{{.*}}, mode = qf322f16_pre_scalar), pre_relu(%{{.*}}, mode = scalar_relu), nz2nd, loop3(%{{.*}}, %{{.*}}, %{{.*}}), sat
 
 // EXPAND-LABEL: func.func @acc_store_probe(
 // EXPAND: pto.set_quant_pre

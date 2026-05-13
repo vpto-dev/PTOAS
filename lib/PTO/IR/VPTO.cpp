@@ -1507,7 +1507,7 @@ static void printAccStoreModeGroup(OpAsmPrinter &printer, AccStoreMode mode,
       printer << ", split(" << split << ")";
     return;
   }
-  llvm_unreachable("unexpected acc_store mode");
+  llvm_unreachable("unexpected mte_l0c mode");
 }
 
 static void printAccStoreModeTypes(OpAsmPrinter &printer, AccStoreMode mode,
@@ -1525,10 +1525,10 @@ static void printAccStoreModeTypes(OpAsmPrinter &printer, AccStoreMode mode,
       printer << ", split(" << splitType << ")";
     return;
   }
-  llvm_unreachable("unexpected acc_store mode");
+  llvm_unreachable("unexpected mte_l0c mode");
 }
 
-static ParseResult parseAccStoreOptionalLoop3(
+static ParseResult parseMteL0cL1OptionalLoop3(
     OpAsmParser &parser,
     SmallVectorImpl<OpAsmParser::UnresolvedOperand> &loop3CountOperands,
     SmallVectorImpl<OpAsmParser::UnresolvedOperand> &loop3SrcStrideOperands,
@@ -1546,7 +1546,7 @@ static ParseResult parseAccStoreOptionalLoop3(
   return success();
 }
 
-static ParseResult parseAccStoreOptionalFpc(
+static ParseResult parseMteL0cL1OptionalFpc(
     OpAsmParser &parser,
     SmallVectorImpl<OpAsmParser::UnresolvedOperand> &fpcOperands) {
   if (failed(parser.parseOptionalKeyword("fpc")))
@@ -1560,17 +1560,17 @@ static ParseResult parseAccStoreOptionalFpc(
   return success();
 }
 
-static void printAccStoreOptionalFpc(OpAsmPrinter &printer, Value fpc) {
+static void printMteL0cL1OptionalFpc(OpAsmPrinter &printer, Value fpc) {
   if (fpc)
     printer << ", fpc(" << fpc << ")";
 }
 
-static void printAccStoreOptionalFpcType(OpAsmPrinter &printer, Type fpcType) {
+static void printMteL0cL1OptionalFpcType(OpAsmPrinter &printer, Type fpcType) {
   if (fpcType)
     printer << ", fpc(" << fpcType << ")";
 }
 
-static ParseResult parseAccStoreOptionalLoop3Types(
+static ParseResult parseMteL0cL1OptionalLoop3Types(
     OpAsmParser &parser, SmallVectorImpl<Type> &loop3CountTypes,
     SmallVectorImpl<Type> &loop3SrcStrideTypes,
     SmallVectorImpl<Type> &loop3DstStrideTypes, StringRef opName) {
@@ -1628,7 +1628,7 @@ static LogicalResult verifyAccStoreLikeModeOperands(
       return op->emitOpError(nz2nzLoop3Error);
     return success();
   }
-  llvm_unreachable("unexpected acc_store mode");
+  llvm_unreachable("unexpected mte_l0c mode");
 }
 
 struct StructuredAccStoreAsmState {
@@ -2026,11 +2026,11 @@ static ParseResult parseStructuredAccStoreClauses(
     else if (keyword == "atomic")
       kind = StructuredAccStoreClauseKind::Atomic;
     else
-      return parser.emitError(parser.getCurrentLocation(), "unknown acc_store clause");
+      return parser.emitError(parser.getCurrentLocation(), "unknown mte_l0c clause");
 
     if (static_cast<int>(kind) < lastClause) {
       return parser.emitError(parser.getCurrentLocation(),
-                              "acc_store clauses must follow canonical order");
+                              "mte_l0c clauses must follow canonical order");
     }
     lastClause = static_cast<int>(kind);
 
@@ -2183,7 +2183,7 @@ static LogicalResult verifyStructuredAccStoreLike(
             "vector_relu requires scaling pointer element type to be f16, bf16, or f32");
       break;
     case ReluPreMode::Pwl:
-      return op->emitOpError("pwl is not supported for target_profile acc_store");
+      return op->emitOpError("pwl is not supported for target_profile mte_l0c_l1");
     }
   }
 
@@ -2236,7 +2236,7 @@ static LogicalResult verifyStructuredAccStoreLike(
   if (static_cast<bool>(atomicType) != static_cast<bool>(atomicOp))
     return op->emitOpError("atomic requires type and op together");
   if ((atomicType || atomicOp) && !allowAtomic)
-    return op->emitOpError("atomic is only supported for acc_store_gm");
+    return op->emitOpError("atomic is only supported for mte_l0c_gm");
 
   return success();
 }
@@ -2403,7 +2403,7 @@ static void addStructuredAccStoreAttrs(OperationState &result,
                                                  *state.satMode));
 }
 
-static ParseResult resolveStructuredAccStoreOptionalOperands(
+static ParseResult resolveStructuredMteL0cL1OptionalOperands(
     OpAsmParser &parser, StructuredAccStoreAsmState &state,
     SmallVectorImpl<Value> &resolvedOperands, OperationState &result) {
   auto location = parser.getCurrentLocation();
@@ -2691,7 +2691,7 @@ LogicalResult CopyGmToUbufOp::verify() {
   return verifyCopyGmToUbufOp(*this, true);
 }
 
-void DmaLoadOp::build(OpBuilder &builder, OperationState &state, Value source,
+void MteGmUbOp::build(OpBuilder &builder, OperationState &state, Value source,
                       Value destination, Value l2CacheCtl, Value lenBurst,
                       pto::DmaLoopConfig nburst,
                       llvm::ArrayRef<pto::DmaLoopConfig> loops,
@@ -2707,7 +2707,7 @@ void DmaLoadOp::build(OpBuilder &builder, OperationState &state, Value source,
   bool hasPadCounts = pad && pad->leftCount && pad->rightCount;
   assert((!pad || static_cast<bool>(pad->leftCount) ==
                        static_cast<bool>(pad->rightCount)) &&
-         "dma_load pad config must provide both left and right counts, or omit both");
+         "mte_gm_ub pad config must provide both left and right counts, or omit both");
   if (pad) {
     state.addOperands(pad->value);
     if (hasPadCounts)
@@ -2724,7 +2724,7 @@ void DmaLoadOp::build(OpBuilder &builder, OperationState &state, Value source,
            pad ? 1 : 0, hasPadCounts ? 1 : 0, hasPadCounts ? 1 : 0}));
 }
 
-void DmaLoadOp::build(OpBuilder &builder, OperationState &state, Value source,
+void MteGmUbOp::build(OpBuilder &builder, OperationState &state, Value source,
                       Value destination, Value l2CacheCtl, Value lenBurst,
                       pto::DmaLoopConfig nburst,
                       std::optional<pto::DmaLoopConfig> loop1,
@@ -2739,7 +2739,7 @@ void DmaLoadOp::build(OpBuilder &builder, OperationState &state, Value source,
         loops, pad);
 }
 
-ParseResult DmaLoadOp::parse(OpAsmParser &parser, OperationState &result) {
+ParseResult MteGmUbOp::parse(OpAsmParser &parser, OperationState &result) {
   OpAsmParser::UnresolvedOperand source, destination, l2CacheCtl, lenBurst;
   SmallVector<OpAsmParser::UnresolvedOperand> nburstOperands;
   SmallVector<OpAsmParser::UnresolvedOperand> loopCountOperands;
@@ -2832,7 +2832,7 @@ ParseResult DmaLoadOp::parse(OpAsmParser &parser, OperationState &result) {
                             "requires loop operand and type groups to match");
 
   auto &segments =
-      result.getOrAddProperties<DmaLoadOp::Properties>().operandSegmentSizes;
+      result.getOrAddProperties<MteGmUbOp::Properties>().operandSegmentSizes;
   llvm::copy(ArrayRef<int32_t>{1, 1, 1, 1, 1, 1, 1,
                                loopGroupCount, loopGroupCount, loopGroupCount,
                                static_cast<int32_t>(padOperands.size() ? 1 : 0),
@@ -2859,7 +2859,7 @@ ParseResult DmaLoadOp::parse(OpAsmParser &parser, OperationState &result) {
   return success();
 }
 
-void DmaLoadOp::print(OpAsmPrinter &printer) {
+void MteGmUbOp::print(OpAsmPrinter &printer) {
   printer << " " << getSource() << ", " << getDestination() << ", "
           << getL2CacheCtl() << ", " << getLenBurst();
   printDmaTripleGroup(printer, "nburst", getNBurst(), getNburstSrcStride(),
@@ -2886,14 +2886,14 @@ void DmaLoadOp::print(OpAsmPrinter &printer) {
                      getRightPaddingCount() ? getRightPaddingCount().getType() : Type{});
 }
 
-void DmaLoadOp::getEffects(
+void MteGmUbOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
   effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
 }
 
-LogicalResult DmaLoadOp::verify() {
+LogicalResult MteGmUbOp::verify() {
   if (failed(verifyCopyGmToUbufOp(*this, true)))
     return failure();
   if (failed(verifyDmaLoadStoreLoopGroups(
@@ -2950,7 +2950,7 @@ static LogicalResult verifyMadPointerKinds(Operation *op, Type lhsTy, Type rhsTy
       lhsAS == pto::AddressSpace::LEFT && rhsAS == pto::AddressSpace::RIGHT &&
       dstAS == pto::AddressSpace::ACC;
   if (!isStrongCube)
-    return op->emitOpError("requires left/right/acc-typed lhs/rhs/dst pointers");
+    return op->emitOpError("requires l0a/l0b/l0c-typed lhs/rhs/dst pointers");
 
   if (!biasTy)
     return success();
@@ -2959,7 +2959,7 @@ static LogicalResult verifyMadPointerKinds(Operation *op, Type lhsTy, Type rhsTy
   if (!biasType)
     return op->emitOpError("requires typed !pto.ptr bias operand");
   if (biasType.getMemorySpace().getAddressSpace() != pto::AddressSpace::BIAS) {
-    return op->emitOpError("requires bias pointer in !pto.ptr<..., bias>");
+    return op->emitOpError("requires bias pointer in !pto.ptr<..., bt>");
   }
   if (biasType.getElementType() != dstType.getElementType()) {
     return op->emitOpError("requires bias element type to match dst element type");
@@ -3003,7 +3003,7 @@ static LogicalResult verifyMadMxCommon(Operation *op, Type lhsTy, Type rhsTy,
       lhsAS == pto::AddressSpace::LEFT && rhsAS == pto::AddressSpace::RIGHT &&
       dstAS == pto::AddressSpace::ACC;
   if (!isStrongCube)
-    return op->emitOpError("requires left/right/acc-typed lhs/rhs/dst pointers");
+    return op->emitOpError("requires l0a/l0b/l0c-typed lhs/rhs/dst pointers");
 
   if (!isMxElementType(lhsType.getElementType()) ||
       !isMxElementType(rhsType.getElementType())) {
@@ -3711,20 +3711,35 @@ LogicalResult CopyUbufToCbufOp::verify() {
   return success();
 }
 
-void DmaCopyOp::getEffects(
+void MteUbUbOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
   effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
 }
 
-LogicalResult DmaCopyOp::verify() {
+LogicalResult MteUbUbOp::verify() {
   if (!isBufferLike(getSource().getType()) || !isBufferLike(getDestination().getType()))
     return emitOpError("requires pointer-like source and destination");
   if (classifyMemoryRole(getSource().getType()) != MemoryRole::UB ||
-      (classifyMemoryRole(getDestination().getType()) != MemoryRole::UB &&
-       classifyMemoryRole(getDestination().getType()) != MemoryRole::Other))
-    return emitOpError("requires UB-backed source and UB- or CBUF-backed destination");
+      classifyMemoryRole(getDestination().getType()) != MemoryRole::UB)
+    return emitOpError("requires UB-backed source and destination");
+  return success();
+}
+
+void MteUbL1Op::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
+}
+
+LogicalResult MteUbL1Op::verify() {
+  if (!isBufferLike(getSource().getType()) || !isBufferLike(getDestination().getType()))
+    return emitOpError("requires pointer-like source and destination");
+  if (classifyMemoryRole(getSource().getType()) != MemoryRole::UB ||
+      classifyMemoryRole(getDestination().getType()) != MemoryRole::Other)
+    return emitOpError("requires UB-backed source and CBUF-backed destination");
   return success();
 }
 
@@ -5552,7 +5567,7 @@ LogicalResult CopyUbufToGmOp::verify() {
   return verifyCopyUbufToGmOp(*this, false);
 }
 
-void DmaStoreOp::build(OpBuilder &builder, OperationState &state, Value source,
+void MteUbGmOp::build(OpBuilder &builder, OperationState &state, Value source,
                        Value destination, Value lenBurst, pto::DmaLoopConfig nburst,
                        llvm::ArrayRef<pto::DmaLoopConfig> loops) {
   state.addOperands({source, destination, lenBurst, nburst.count,
@@ -5573,7 +5588,7 @@ void DmaStoreOp::build(OpBuilder &builder, OperationState &state, Value source,
            static_cast<int32_t>(loops.size())}));
 }
 
-void DmaStoreOp::build(OpBuilder &builder, OperationState &state, Value source,
+void MteUbGmOp::build(OpBuilder &builder, OperationState &state, Value source,
                        Value destination, Value lenBurst, pto::DmaLoopConfig nburst,
                        std::optional<pto::DmaLoopConfig> loop1,
                        std::optional<pto::DmaLoopConfig> loop2) {
@@ -5585,7 +5600,7 @@ void DmaStoreOp::build(OpBuilder &builder, OperationState &state, Value source,
   build(builder, state, source, destination, lenBurst, nburst, loops);
 }
 
-ParseResult DmaStoreOp::parse(OpAsmParser &parser, OperationState &result) {
+ParseResult MteUbGmOp::parse(OpAsmParser &parser, OperationState &result) {
   OpAsmParser::UnresolvedOperand source, destination, lenBurst;
   SmallVector<OpAsmParser::UnresolvedOperand> nburstOperands;
   SmallVector<OpAsmParser::UnresolvedOperand> loopCountOperands;
@@ -5649,7 +5664,7 @@ ParseResult DmaStoreOp::parse(OpAsmParser &parser, OperationState &result) {
                             "requires loop operand and type groups to match");
 
   auto &segments =
-      result.getOrAddProperties<DmaStoreOp::Properties>().operandSegmentSizes;
+      result.getOrAddProperties<MteUbGmOp::Properties>().operandSegmentSizes;
   llvm::copy(ArrayRef<int32_t>{1, 1, 1, 1, 1, 1,
                                loopGroupCount, loopGroupCount, loopGroupCount},
              segments.begin());
@@ -5670,7 +5685,7 @@ ParseResult DmaStoreOp::parse(OpAsmParser &parser, OperationState &result) {
   return success();
 }
 
-void DmaStoreOp::print(OpAsmPrinter &printer) {
+void MteUbGmOp::print(OpAsmPrinter &printer) {
   printer << " " << getSource() << ", " << getDestination() << ", "
           << getLenBurst();
   printDmaTripleGroup(printer, "nburst", getNBurst(), getNburstSrcStride(),
@@ -5690,14 +5705,14 @@ void DmaStoreOp::print(OpAsmPrinter &printer) {
                         dstStride.getType());
 }
 
-void DmaStoreOp::getEffects(
+void MteUbGmOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
   effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
 }
 
-LogicalResult DmaStoreOp::verify() {
+LogicalResult MteUbGmOp::verify() {
   if (!isBufferLike(getSource().getType()) ||
       !isBufferLike(getDestination().getType()))
     return emitOpError(
@@ -5719,7 +5734,7 @@ LogicalResult DmaStoreOp::verify() {
       getLoopDstStrides());
 }
 
-void CubeLoadOp::build(OpBuilder &builder, OperationState &state, Value source,
+void MteGmL1Op::build(OpBuilder &builder, OperationState &state, Value source,
                        Value destination, Value lenBurst,
                        pto::DmaLoopConfig nburst,
                        llvm::ArrayRef<pto::DmaLoopConfig> loops) {
@@ -5742,7 +5757,7 @@ void CubeLoadOp::build(OpBuilder &builder, OperationState &state, Value source,
            static_cast<int32_t>(loops.size())}));
 }
 
-void CubeLoadOp::build(OpBuilder &builder, OperationState &state, Value source,
+void MteGmL1Op::build(OpBuilder &builder, OperationState &state, Value source,
                        Value destination, Value lenBurst,
                        pto::DmaLoopConfig nburst,
                        std::optional<pto::DmaLoopConfig> loop1,
@@ -5755,7 +5770,7 @@ void CubeLoadOp::build(OpBuilder &builder, OperationState &state, Value source,
   build(builder, state, source, destination, lenBurst, nburst, loops);
 }
 
-void CubeStoreOp::build(OpBuilder &builder, OperationState &state, Value source,
+void MteL1UbOp::build(OpBuilder &builder, OperationState &state, Value source,
                         Value destination, Value lenBurst,
                         pto::DmaLoopConfig nburst,
                         llvm::ArrayRef<pto::DmaLoopConfig> loops) {
@@ -5778,7 +5793,7 @@ void CubeStoreOp::build(OpBuilder &builder, OperationState &state, Value source,
            static_cast<int32_t>(loops.size())}));
 }
 
-void CubeStoreOp::build(OpBuilder &builder, OperationState &state, Value source,
+void MteL1UbOp::build(OpBuilder &builder, OperationState &state, Value source,
                         Value destination, Value lenBurst,
                         pto::DmaLoopConfig nburst,
                         std::optional<pto::DmaLoopConfig> loop1,
@@ -5791,7 +5806,7 @@ void CubeStoreOp::build(OpBuilder &builder, OperationState &state, Value source,
   build(builder, state, source, destination, lenBurst, nburst, loops);
 }
 
-void CubeLoadFracOp::build(OpBuilder &builder, OperationState &state,
+void MteGmL1FracOp::build(OpBuilder &builder, OperationState &state,
                            Value source, Value destination,
                            pto::CubeLoadFracMode mode,
                            pto::CubeLoadFracShapeConfig shape,
@@ -5811,7 +5826,7 @@ void CubeLoadFracOp::build(OpBuilder &builder, OperationState &state,
                      CubeLoadFracModeAttr::get(builder.getContext(), mode));
 }
 
-ParseResult CubeLoadOp::parse(OpAsmParser &parser, OperationState &result) {
+ParseResult MteGmL1Op::parse(OpAsmParser &parser, OperationState &result) {
   OpAsmParser::UnresolvedOperand source, destination, lenBurst;
   SmallVector<OpAsmParser::UnresolvedOperand> nburstOperands;
   SmallVector<OpAsmParser::UnresolvedOperand> loopCountOperands;
@@ -5872,7 +5887,7 @@ ParseResult CubeLoadOp::parse(OpAsmParser &parser, OperationState &result) {
                             "requires loop operand and type groups to match");
 
   auto &segments =
-      result.getOrAddProperties<CubeLoadOp::Properties>().operandSegmentSizes;
+      result.getOrAddProperties<MteGmL1Op::Properties>().operandSegmentSizes;
   llvm::copy(ArrayRef<int32_t>{1, 1, 1, 1, 1, 1,
                                loopGroupCount, loopGroupCount, loopGroupCount},
              segments.begin());
@@ -5892,7 +5907,7 @@ ParseResult CubeLoadOp::parse(OpAsmParser &parser, OperationState &result) {
   return success();
 }
 
-ParseResult CubeStoreOp::parse(OpAsmParser &parser, OperationState &result) {
+ParseResult MteL1UbOp::parse(OpAsmParser &parser, OperationState &result) {
   OpAsmParser::UnresolvedOperand source, destination, lenBurst;
   SmallVector<OpAsmParser::UnresolvedOperand> nburstOperands;
   SmallVector<OpAsmParser::UnresolvedOperand> loopCountOperands;
@@ -5953,7 +5968,7 @@ ParseResult CubeStoreOp::parse(OpAsmParser &parser, OperationState &result) {
                             "requires loop operand and type groups to match");
 
   auto &segments =
-      result.getOrAddProperties<CubeStoreOp::Properties>().operandSegmentSizes;
+      result.getOrAddProperties<MteL1UbOp::Properties>().operandSegmentSizes;
   llvm::copy(ArrayRef<int32_t>{1, 1, 1, 1, 1, 1,
                                loopGroupCount, loopGroupCount, loopGroupCount},
              segments.begin());
@@ -5973,7 +5988,7 @@ ParseResult CubeStoreOp::parse(OpAsmParser &parser, OperationState &result) {
   return success();
 }
 
-ParseResult CubeLoadFracOp::parse(OpAsmParser &parser, OperationState &result) {
+ParseResult MteGmL1FracOp::parse(OpAsmParser &parser, OperationState &result) {
   OpAsmParser::UnresolvedOperand source, destination;
   StringRef modeKeyword;
   SmallVector<OpAsmParser::UnresolvedOperand> shapeOperands;
@@ -6061,7 +6076,7 @@ ParseResult CubeLoadFracOp::parse(OpAsmParser &parser, OperationState &result) {
   return success();
 }
 
-void CubeLoadOp::print(OpAsmPrinter &printer) {
+void MteGmL1Op::print(OpAsmPrinter &printer) {
   printer << " " << getSource() << ", " << getDestination() << ", "
           << getLenBurst();
   printDmaTripleGroup(printer, "nburst", getNBurst(), getNburstSrcStride(),
@@ -6080,7 +6095,7 @@ void CubeLoadOp::print(OpAsmPrinter &printer) {
                         dstStride.getType());
 }
 
-void CubeStoreOp::print(OpAsmPrinter &printer) {
+void MteL1UbOp::print(OpAsmPrinter &printer) {
   printer << " " << getSource() << ", " << getDestination() << ", "
           << getLenBurst();
   printDmaTripleGroup(printer, "nburst", getNBurst(), getNburstSrcStride(),
@@ -6099,21 +6114,21 @@ void CubeStoreOp::print(OpAsmPrinter &printer) {
                         dstStride.getType());
 }
 
-void BiasLoadOp::build(OpBuilder &builder, OperationState &state, Value source,
+void MteL1BtOp::build(OpBuilder &builder, OperationState &state, Value source,
                        Value destination, Value lenBurst,
                        pto::DmaLoopConfig nburst) {
   state.addOperands({source, destination, lenBurst, nburst.count,
                      nburst.srcStride, nburst.dstStride});
 }
 
-void FpLoadOp::build(OpBuilder &builder, OperationState &state, Value source,
+void MteL1FbOp::build(OpBuilder &builder, OperationState &state, Value source,
                      Value destination, Value lenBurst,
                      pto::DmaLoopConfig nburst) {
   state.addOperands({source, destination, lenBurst, nburst.count,
                      nburst.srcStride, nburst.dstStride});
 }
 
-ParseResult BiasLoadOp::parse(OpAsmParser &parser, OperationState &result) {
+ParseResult MteL1BtOp::parse(OpAsmParser &parser, OperationState &result) {
   OpAsmParser::UnresolvedOperand source, destination, lenBurst;
   SmallVector<OpAsmParser::UnresolvedOperand> nburstOperands;
   if (parseRequiredOperandWithComma(parser, source) ||
@@ -6140,7 +6155,7 @@ ParseResult BiasLoadOp::parse(OpAsmParser &parser, OperationState &result) {
   return success();
 }
 
-ParseResult FpLoadOp::parse(OpAsmParser &parser, OperationState &result) {
+ParseResult MteL1FbOp::parse(OpAsmParser &parser, OperationState &result) {
   OpAsmParser::UnresolvedOperand source, destination, lenBurst;
   SmallVector<OpAsmParser::UnresolvedOperand> nburstOperands;
   if (parseRequiredOperandWithComma(parser, source) ||
@@ -6167,7 +6182,7 @@ ParseResult FpLoadOp::parse(OpAsmParser &parser, OperationState &result) {
   return success();
 }
 
-void BiasLoadOp::print(OpAsmPrinter &printer) {
+void MteL1BtOp::print(OpAsmPrinter &printer) {
   printer << " " << getSource() << ", " << getDestination() << ", "
           << getLenBurst();
   printDmaTripleGroup(printer, "nburst", getNBurst(), getNburstSrcGap(),
@@ -6179,7 +6194,7 @@ void BiasLoadOp::print(OpAsmPrinter &printer) {
           << getNburstDstGap().getType();
 }
 
-void FpLoadOp::print(OpAsmPrinter &printer) {
+void MteL1FbOp::print(OpAsmPrinter &printer) {
   printer << " " << getSource() << ", " << getDestination() << ", "
           << getLenBurst();
   printDmaTripleGroup(printer, "nburst", getNBurst(), getNburstSrcGap(),
@@ -6191,7 +6206,7 @@ void FpLoadOp::print(OpAsmPrinter &printer) {
           << getNburstDstGap().getType();
 }
 
-void CubeLoadFracOp::print(OpAsmPrinter &printer) {
+void MteGmL1FracOp::print(OpAsmPrinter &printer) {
   printer << " " << getSource() << ", " << getDestination() << ", "
           << pto::stringifyCubeLoadFracMode(getMode());
   printer << ", shape(" << getNValue() << ", " << getDValue() << ")";
@@ -6217,7 +6232,7 @@ void CubeLoadFracOp::print(OpAsmPrinter &printer) {
           << getL2CacheCtrl().getType() << ", " << getSmallc0En().getType();
 }
 
-LogicalResult CubeLoadOp::verify() {
+LogicalResult MteGmL1Op::verify() {
   if (failed(verifyCopyGmToUbufOp(*this, true)))
     return failure();
   return verifyDmaLoadStoreLoopGroups(
@@ -6225,7 +6240,7 @@ LogicalResult CubeLoadOp::verify() {
       getLoopDstStrides());
 }
 
-LogicalResult CubeStoreOp::verify() {
+LogicalResult MteL1UbOp::verify() {
   if (failed(verifyCopyCbufToUbufLikeOp(*this)))
     return failure();
   return verifyDmaLoadStoreLoopGroups(
@@ -6233,7 +6248,7 @@ LogicalResult CubeStoreOp::verify() {
       getLoopDstStrides());
 }
 
-LogicalResult BiasLoadOp::verify() {
+LogicalResult MteL1BtOp::verify() {
   auto getBufferElementType = [](Type type) -> Type {
     if (auto ptrType = dyn_cast<pto::PtrType>(type))
       return ptrType.getElementType();
@@ -6265,7 +6280,7 @@ LogicalResult BiasLoadOp::verify() {
   return success();
 }
 
-LogicalResult FpLoadOp::verify() {
+LogicalResult MteL1FbOp::verify() {
   if (!isBufferLike(getSource().getType()) || !isBufferLike(getDestination().getType()))
     return emitOpError(
         "requires typed !pto.ptr or memref source and destination");
@@ -6295,7 +6310,7 @@ LogicalResult FpLoadOp::verify() {
   return success();
 }
 
-LogicalResult CubeLoadFracOp::verify() {
+LogicalResult MteGmL1FracOp::verify() {
   if (failed(verifyCopyGmToUbufOp(*this, true)))
     return failure();
 
@@ -6329,42 +6344,42 @@ LogicalResult CubeLoadFracOp::verify() {
   return success();
 }
 
-void CubeLoadOp::getEffects(
+void MteGmL1Op::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
   effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
 }
 
-void CubeStoreOp::getEffects(
+void MteL1UbOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
   effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
 }
 
-void BiasLoadOp::getEffects(
+void MteL1BtOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
   effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
 }
 
-void FpLoadOp::getEffects(
+void MteL1FbOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
   effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
 }
 
-void CubeLoadFracOp::getEffects(
+void MteGmL1FracOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
   effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
 }
 
-ParseResult AccStoreOp::parse(OpAsmParser &parser, OperationState &result) {
+ParseResult MteL0cL1Op::parse(OpAsmParser &parser, OperationState &result) {
   Builder builder(parser.getContext());
   StructuredAccStoreAsmState state;
   OpAsmParser::UnresolvedOperand source, destination, m, n, srcStride,
@@ -6388,7 +6403,7 @@ ParseResult AccStoreOp::parse(OpAsmParser &parser, OperationState &result) {
       parseStructuredAccStoreTailTypes(parser, state))
     return failure();
 
-  setStructuredAccStoreSegmentSizes<AccStoreOp>(
+  setStructuredAccStoreSegmentSizes<MteL0cL1Op>(
       result, {1, 1, 1, 1, 1, 1, !state.preQuantOperands.empty() ? 1 : 0,
                !state.preReluOperands.empty() ? 1 : 0,
                !state.clipValueOperands.empty() ? 1 : 0,
@@ -6399,9 +6414,9 @@ ParseResult AccStoreOp::parse(OpAsmParser &parser, OperationState &result) {
                !state.loop3DstStrideOperands.empty() ? 1 : 0});
   if (state.atomicType || state.atomicOp) {
     return parser.emitError(parser.getCurrentLocation(),
-                            "atomic is only supported for acc_store_gm");
+                            "atomic is only supported for mte_l0c_gm");
   }
-  addStructuredAccStoreAttrs<AccStoreOp>(result, builder, state);
+  addStructuredAccStoreAttrs<MteL0cL1Op>(result, builder, state);
 
   if (parser.resolveOperand(source, sourceType, result.operands) ||
       parser.resolveOperand(destination, destinationType, result.operands) ||
@@ -6432,7 +6447,7 @@ ParseResult AccStoreOp::parse(OpAsmParser &parser, OperationState &result) {
   return success();
 }
 
-void AccStoreOp::print(OpAsmPrinter &printer) {
+void MteL0cL1Op::print(OpAsmPrinter &printer) {
   printer << " " << getSource() << ", " << getDestination() << ", " << getM()
           << ", " << getN() << ", " << getSrcStride() << ", " << getDstStride();
   printStructuredAccStoreClauses(printer, getUnitFlag(), getPreQuant(),
@@ -6460,7 +6475,7 @@ void AccStoreOp::print(OpAsmPrinter &printer) {
       getLoop3DstStride());
 }
 
-LogicalResult AccStoreOp::verify() {
+LogicalResult MteL0cL1Op::verify() {
   if (!isBufferLike(getSource().getType()) ||
       !isBufferLike(getDestination().getType()))
     return emitOpError("requires buffer-like source and destination");
@@ -6479,58 +6494,58 @@ LogicalResult AccStoreOp::verify() {
       std::nullopt, /*allowAtomic=*/false);
 }
 
-LogicalResult LeftLoadOp::verify() {
+LogicalResult MteL1L0aOp::verify() {
   return verifyCubeBridgeLoadLikeOp(*this, AddressSpace::LEFT, "LEFT");
 }
 
-LogicalResult RightLoadOp::verify() {
+LogicalResult MteL1L0bOp::verify() {
   return verifyCubeBridgeLoadLikeOp(*this, AddressSpace::RIGHT, "RIGHT");
 }
 
-LogicalResult LeftLoadMxOp::verify() {
+LogicalResult MteL1L0aMxOp::verify() {
   return verifyCubeBridgeLoadLikeOp(*this, AddressSpace::LEFT, "LEFT");
 }
 
-LogicalResult RightLoadMxOp::verify() {
+LogicalResult MteL1L0bMxOp::verify() {
   return verifyCubeBridgeLoadLikeOp(*this, AddressSpace::RIGHT, "RIGHT");
 }
 
-void LeftLoadOp::getEffects(
+void MteL1L0aOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
   effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
 }
 
-void RightLoadOp::getEffects(
+void MteL1L0bOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
   effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
 }
 
-void LeftLoadMxOp::getEffects(
+void MteL1L0aMxOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
   effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
 }
 
-void RightLoadMxOp::getEffects(
+void MteL1L0bMxOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
   effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
 }
 
-void AccStoreOp::getEffects(
+void MteL0cL1Op::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
   effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
 }
 
-ParseResult AccStoreGmOp::parse(OpAsmParser &parser, OperationState &result) {
+ParseResult MteL0cGmOp::parse(OpAsmParser &parser, OperationState &result) {
   Builder builder(parser.getContext());
   StructuredAccStoreAsmState state;
   OpAsmParser::UnresolvedOperand source, destination, m, n, srcStride,
@@ -6559,7 +6574,7 @@ ParseResult AccStoreGmOp::parse(OpAsmParser &parser, OperationState &result) {
       parseStructuredAccStoreTailTypes(parser, state))
     return failure();
 
-  setStructuredAccStoreSegmentSizes<AccStoreGmOp>(
+  setStructuredAccStoreSegmentSizes<MteL0cGmOp>(
       result, {1, 1, 1, 1, 1, 1, !state.preQuantOperands.empty() ? 1 : 0,
                !state.preReluOperands.empty() ? 1 : 0,
                !state.clipValueOperands.empty() ? 1 : 0, 1, 1,
@@ -6568,7 +6583,7 @@ ParseResult AccStoreGmOp::parse(OpAsmParser &parser, OperationState &result) {
                !state.loop3CountOperands.empty() ? 1 : 0,
                !state.loop3SrcStrideOperands.empty() ? 1 : 0,
                !state.loop3DstStrideOperands.empty() ? 1 : 0});
-  addStructuredAccStoreAttrs<AccStoreGmOp>(result, builder, state);
+  addStructuredAccStoreAttrs<MteL0cGmOp>(result, builder, state);
 
   if (parser.resolveOperand(source, sourceType, result.operands) ||
       parser.resolveOperand(destination, destinationType, result.operands) ||
@@ -6601,7 +6616,7 @@ ParseResult AccStoreGmOp::parse(OpAsmParser &parser, OperationState &result) {
   return success();
 }
 
-void AccStoreGmOp::print(OpAsmPrinter &printer) {
+void MteL0cGmOp::print(OpAsmPrinter &printer) {
   printer << " " << getSource() << ", " << getDestination() << ", " << getM()
           << ", " << getN() << ", " << getSrcStride() << ", "
           << getDstStride() << ", " << getSid() << ", " << getL2CacheCtrl();
@@ -6631,7 +6646,7 @@ void AccStoreGmOp::print(OpAsmPrinter &printer) {
       getLoop3DstStride());
 }
 
-LogicalResult AccStoreGmOp::verify() {
+LogicalResult MteL0cGmOp::verify() {
   if (!isBufferLike(getSource().getType()) ||
       !isBufferLike(getDestination().getType()))
     return emitOpError("requires buffer-like source and destination");
@@ -6650,14 +6665,14 @@ LogicalResult AccStoreGmOp::verify() {
       getAtomicOp(), /*allowAtomic=*/true);
 }
 
-void AccStoreGmOp::getEffects(
+void MteL0cGmOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
   effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
 }
 
-ParseResult AccStoreUbOp::parse(OpAsmParser &parser, OperationState &result) {
+ParseResult MteL0cUbOp::parse(OpAsmParser &parser, OperationState &result) {
   Builder builder(parser.getContext());
   StructuredAccStoreAsmState state;
   OpAsmParser::UnresolvedOperand source, destination, m, n, srcStride,
@@ -6716,7 +6731,7 @@ ParseResult AccStoreUbOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parseStructuredAccStoreTailTypes(parser, state))
     return failure();
 
-  setStructuredAccStoreSegmentSizes<AccStoreUbOp>(
+  setStructuredAccStoreSegmentSizes<MteL0cUbOp>(
       result, {1, 1, 1, 1, 1, 1, !state.preQuantOperands.empty() ? 1 : 0,
                !state.preReluOperands.empty() ? 1 : 0,
                !state.clipValueOperands.empty() ? 1 : 0,
@@ -6728,9 +6743,9 @@ ParseResult AccStoreUbOp::parse(OpAsmParser &parser, OperationState &result) {
                !state.loop3DstStrideOperands.empty() ? 1 : 0});
   if (state.atomicType || state.atomicOp) {
     return parser.emitError(parser.getCurrentLocation(),
-                            "atomic is only supported for acc_store_gm");
+                            "atomic is only supported for mte_l0c_gm");
   }
-  addStructuredAccStoreAttrs<AccStoreUbOp>(result, builder, state);
+  addStructuredAccStoreAttrs<MteL0cUbOp>(result, builder, state);
   result.addAttribute("dst_mode",
                       AccStoreUbDstModeAttr::get(builder.getContext(), dstMode));
 
@@ -6765,7 +6780,7 @@ ParseResult AccStoreUbOp::parse(OpAsmParser &parser, OperationState &result) {
   return success();
 }
 
-void AccStoreUbOp::print(OpAsmPrinter &printer) {
+void MteL0cUbOp::print(OpAsmPrinter &printer) {
   printer << " " << getSource() << ", " << getDestination() << ", " << getM()
           << ", " << getN() << ", " << getSrcStride() << ", "
           << getDstStride() << ", dst_mode(";
@@ -6807,7 +6822,7 @@ void AccStoreUbOp::print(OpAsmPrinter &printer) {
       getLoop3DstStride());
 }
 
-LogicalResult AccStoreUbOp::verify() {
+LogicalResult MteL0cUbOp::verify() {
   if (!isBufferLike(getSource().getType()) ||
       !isBufferLike(getDestination().getType()))
     return emitOpError("requires buffer-like source and destination");
@@ -6860,7 +6875,7 @@ LogicalResult AccStoreUbOp::verify() {
   return success();
 }
 
-void AccStoreUbOp::getEffects(
+void MteL0cUbOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
