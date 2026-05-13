@@ -1,9 +1,9 @@
 # ptodsl — PTO Python IR Builders
 
-This directory contains Python scripts that construct PTO MLIR IR modules
-programmatically using the MLIR Python bindings. Two complete kernel examples
-are provided, each in a **low-level** (raw bindings) and a **high-level**
-(utility-wrapped) variant.
+A lightweight, pip-installable DSL package for building PTO MLIR IR modules
+in Python.  The API is inspired by Triton / CuteDSL: kernels are ordinary
+Python functions decorated with `@pto.to_ir`, type annotations carry PTO
+types as lazy descriptors, and control-flow maps 1-to-1 to MLIR operations.
 
 ---
 
@@ -11,26 +11,32 @@ are provided, each in a **low-level** (raw bindings) and a **high-level**
 
 ```
 ptodsl/
-├── ptodsl_utils.py                     # Reusable utility wrappers
-│
-├── tile_and_vpto_builder_lowlevel.py   # TADD kernel – raw bindings
-├── tile_and_vpto_builder_highlevel.py  # TADD kernel – ptodsl_utils
-│
-├── softmax_builder_lowlevel.py         # Softmax kernel – raw bindings
-├── softmax_builder_highlevel.py        # Softmax kernel – ptodsl_utils
-│
-└── check_ir.py                         # IR correctness test for all builders
+├── ptodsl/              # pip-installable package
+│   ├── __init__.py      # exports: pto, scalar
+│   ├── pto.py           # main pto.* namespace
+│   ├── scalar.py        # pto.scalar.* arith helpers
+│   ├── _bootstrap.py    # MLIR path setup + context factory
+│   ├── _types.py        # lazy dtype descriptors and type constructors
+│   ├── _ops.py          # PTO operation wrappers
+│   ├── _control_flow.py # vecscope, for_, if_, yield_ context managers
+│   └── _module.py       # @pto.to_ir decorator + module builders
+├── examples/
+│   ├── tadd_lowlevel.py    # TADD – raw MLIR Python binding calls
+│   ├── tadd_dsl.py         # TADD – @pto.to_ir DSL style
+│   ├── softmax_lowlevel.py # Softmax – raw MLIR Python binding calls
+│   └── softmax_dsl.py      # Softmax – @pto.to_ir DSL style
+├── pyproject.toml       # pip install -e .
+├── check_ir.py          # IR correctness test runner
+└── README.md
 ```
 
 ---
 
 ## Prerequisites
 
-The ptoas dialect must be installed and the environment set up before use:
-
 ```bash
-# Install (first time only)
-cd /workdir/ptoas_a5
+# Install ptoas (first time only)
+cd $PTOAS_REPO_ROOT          # e.g. export PTOAS_REPO_ROOT=/workdir/ptoas_a5
 bash quick_install.sh
 
 # Set up environment in every new shell
@@ -39,71 +45,164 @@ source set_ptoas_env.sh
 
 ---
 
+## Install the package
+
+```bash
+cd $PTOAS_REPO_ROOT/ptodsl
+pip install -e .
+```
+
+---
+
 ## Running the IR check
 
 ```bash
-# From ptoas_a5/ptodsl/
+# From $PTOAS_REPO_ROOT/ptodsl/
 python3 check_ir.py
 
-# Or from the repository root (ptoas_a5/)
+# From the repository root ($PTOAS_REPO_ROOT)
 python3 ptodsl/check_ir.py
 ```
 
-Expected output when everything is correct:
+Expected output:
 
 ```
 ptodsl IR check
 ==================================================
   PASS  TADD  low-level
-  PASS  TADD  high-level
+  PASS  TADD  dsl-style
   PASS  softmax low-level
-  PASS  softmax high-level
+  PASS  softmax dsl-style
 ==================================================
 Result: ALL PASS
 ```
 
-Exit code is `0` on full pass, `1` if any check fails.  
-A unified diff of the first 60 diverging lines is printed for each failing case.
+Exit code is `0` on full pass, `1` on any failure.  A unified diff of up to
+60 diverging lines is printed for each failing case.
 
 ---
 
-## Kernel examples
+## DSL-style API quick reference
 
-### TADD — simple vector add (vPTO)
+```python
+from ptodsl import pto
+s = pto.scalar   # arith shorthand alias
+```
 
-| File | Reference |
+### Kernel decorator
+
+```python
+@pto.to_ir(name="MyKernel", kernel_kind="vector", arch="a5")
+def MyKernel():
+    ...
+
+@pto.to_ir(name="Softmax", kernel_kind="vector", arch="a5", func_attr="pto.aicore")
+def Softmax(arg0: pto.ptr(pto.float32, "gm"), n: pto.int32):
+    ...
+
+print(MyKernel)          # prints MLIR text
+mod = MyKernel.build()   # returns mlir.ir.Module
+```
+
+`func_attr="pto.aicore"` selects a flat single-module structure with the
+`pto.aicore` function attribute (softmax style).  Without it, a nested
+double-module is emitted (TADD style).
+
+### Type descriptors (lazy – safe to use in annotations)
+
+| Expression | MLIR type |
 |---|---|
-| `tile_and_vpto_builder_lowlevel.py` | `test/lit/vpto/expand_tileop_to_vpto_result.pto` |
-| `tile_and_vpto_builder_highlevel.py` | same |
+| `pto.float32` | `f32` |
+| `pto.int32` | `i32` |
+| `pto.int64` | `i64` |
+| `pto.index` | `index` |
+| `pto.ptr(pto.float32, "gm")` | `!pto.ptr<f32, gm>` |
+| `pto.ptr(pto.float32, "ub")` | `!pto.ptr<f32, ub>` |
 
-The kernel performs an element-wise vector add over a 1024-element float32
-buffer using 16 iterations of 64-wide vector instructions inside a
-`pto.vecscope`.  It exercises:
-`pto.castptr`, `pto.addptr`, `pto.plt_b32`, `pto.vlds`, `pto.vadd`,
-`pto.vsts`, nested modules (`pto.target_arch` + `pto.kernel_kind`).
+### Type constructors (eager – require active context)
 
-### Online softmax update
+```python
+vf32     = pto.vreg_type(64, pto.float32)   # !pto.vreg<64xf32>
+tile_col = pto.tile_buf_type([8,1], pto.float32, [-1,1], blayout="ColMajor")
+tile_w   = pto.tile_buf_type([8,128], pto.float32, [-1,-1])
+```
 
-| File | Reference |
-|---|---|
-| `softmax_builder_lowlevel.py` | `test/tilelang_st/npu/a5/src/st/testcase/softmax/softmax.pto` |
-| `softmax_builder_highlevel.py` | same |
+### Constants
 
-An online softmax update kernel that mixes tile-domain loads/stores with
-raw vector compute inside a `pto.vecscope`.  It exercises a significantly
-larger set of ops including:
-`pto.get_block_idx`, `pto.make_tensor_view`, `pto.partition_view`,
-`pto.alloc_tile`, `pto.tload`/`pto.tstore`, `pto.set_flag`/`pto.wait_flag`,
-`pto.tile_buf_addr`, `pto.pset_b32`, `pto.vcmax`, `pto.vdup`, `pto.vmax`,
-`pto.vexpdif`, `pto.vmul`, `pto.vcadd`, `pto.vdiv`, `pto.barrier`,
-`scf.for` with `iter_args`, and `scf.if` with result values.
+```python
+c0     = pto.const(0)               # index
+c1_i32 = pto.const(1, dtype=pto.int32)
+c64_i64= pto.const(64, dtype=pto.int64)
+```
+
+### Control flow
+
+```python
+with pto.vecscope():                # pto.vecscope { … }
+    ...
+
+with pto.for_(c0, c16, step=c1) as i:     # simple scf.for
+    ...                                    # scf.yield inserted automatically
+
+with pto.for_(c0, c128, step=c64, iter_args=(a, b)) as loop:
+    x, y = loop.iter_args
+    ...
+    pto.yield_(nx, ny)             # scf.yield with values
+fx, fy = loop.results
+
+with pto.if_(has_rows):            # simple scf.if
+    ...                             # scf.yield inserted automatically
+
+with pto.if_(has_chunk, results=(vf32, vf32)) as br:
+    with br.then_:
+        ...
+        pto.yield_(merged_max, merged_sum)
+    with br.else_:
+        pto.yield_(running_max, running_sum)
+x, y = br.results
+```
+
+### Scalar arithmetic (`s = pto.scalar`)
+
+```python
+s.muli(a, b)                 # arith.muli
+s.addi(a, b)                 # arith.addi
+s.subi(a, b)                 # arith.subi
+s.index_cast(val)            # arith.index_cast → index
+s.index_cast(pto.int32, val) # arith.index_cast → i32
+s.cmpi_sgt(a, b)             # arith.cmpi sgt
+s.cmpi("slt", a, b)          # arith.cmpi with named predicate
+s.select(cond, t, f)         # arith.select
+```
+
+### PTO operations
+
+```python
+pto.castptr(addr, ptr_type)              # pto.castptr
+pto.addptr(ptr, offset)                  # pto.addptr
+pto.vlds(ptr, offset, vreg_type)         # pto.vlds
+pto.vbrc_load(ptr, offset, vreg_type)    # pto.vlds {dist="BRC_B32"}
+pto.vsts(v, ptr, offset, mask)           # pto.vsts
+pto.vsts_1pt(v, ptr, offset, mask)       # pto.vsts {dist="1PT_B32"}
+pto.plt_b32(scalar)                      # → (mask, scalar_out)
+pto.pset_b32("PAT_ALL")                  # pto.pset_b32 → mask
+pto.vadd(a, b, mask)   # infers result type from a.type
+pto.vmul / vmax / vdiv / vcmax / vcadd / vdup / vexpdif  # similarly
+pto.make_tensor_view(ptr, shape=…, strides=…)    # type inferred
+pto.partition_view(tv, offsets=…, sizes=…)        # type inferred
+pto.alloc_tile(tile_type, addr=…, valid_row=…, valid_col=…)
+pto.tload(part, tile)
+pto.tstore(tile, part)
+pto.tile_ptr(tile, ptr_type)
+pto.get_block_idx()           # → i64
+pto.set_flag("MTE2", "V", event_id=0)
+pto.wait_flag("MTE2", "V", event_id=0)
+pto.barrier_all()
+```
 
 ---
 
 ## How the IR check works
-
-`check_ir.py` calls `build()` in each builder, then compares the resulting
-module against its reference `.pto` file using MLIR round-trip normalization:
 
 ```
 generated IR  ──┐
@@ -111,132 +210,6 @@ generated IR  ──┐
 reference .pto ──┘  (strips comments, normalises SSA names and attr order)
 ```
 
-**Why round-trip normalization?**
-
-| Issue | Raw text comparison | Round-trip comparison |
-|---|---|---|
-| `// comment` lines in `.pto` files | breaks | ignored by MLIR parser |
-| Named SSA values (`%block_idx`) vs anonymous (`%0`) | breaks | both become `%0`, `%1` … |
-| Attribute dict ordering (`{a=1, b=2}` vs `{b=2, a=1}`) | breaks | normalized |
-| Constant declaration order | breaks | **preserved** – must match |
-
-Because constant declaration order is preserved after round-trip, builders
-must emit constants in the same order as the reference.  The `check_ir.py`
-diff output makes such mismatches easy to locate.
-
----
-
-## `ptodsl_utils.py` – utility reference
-
-The utility module eliminates boilerplate so kernel logic is immediately
-readable.  All helpers operate on the **current** MLIR context and insertion
-point; no context argument is threaded.
-
-### Type constructors
-
-| Helper | MLIR type |
-|---|---|
-| `i32_type()` | `i32` |
-| `i64_type()` | `i64` |
-| `idx_type()` | `index` |
-| `ptr_type(elem, space="ub")` | `!pto.ptr<elem, space>` |
-| `vreg_type(lanes, elem)` | `!pto.vreg<lanesxelem>` |
-| `mask_type(bits="b32")` | `!pto.mask<bits>` |
-
-### Constant builders
-
-| Helper | Op |
-|---|---|
-| `c_idx(v)` | `arith.constant v : index` |
-| `c_i32(v)` | `arith.constant v : i32` |
-| `c_i64(v)` | `arith.constant v : i64` |
-
-### Arithmetic
-
-`muli`, `addi`, `subi` — `arith.muli/addi/subi`  
-`index_cast(type, val)` — `arith.index_cast`  
-`cmpi_sgt(a, b)` — `arith.cmpi sgt`  
-`select_val(cond, t, f)` — `arith.select`
-
-### Module / function builders
-
-```python
-with pto_context():                          # MLIR Context + PTO dialect
-    with vpto_kernel("MyKernel", arch="a5") as mod:   # nested module + func (no args)
-        ...
-
-with pto_context():
-    with flat_pto_module("a5") as mod:       # flat module + pto.kernel_kind
-        with pto_aicore_func("f", [ptr_gm, i32]) as (p, n):  # func with args
-            ...
-```
-
-### Control-flow helpers
-
-```python
-with vecscope():               # pto.vecscope { ... }
-
-with for_range(lo, hi, step) as i:       # scf.for, auto-inserts scf.yield
-    ...
-
-with for_range_iter(lo, hi, step, [a, b]) as cf:  # scf.for with iter_args
-    x, y = cf.inner_iter_args
-    yield_vals(new_x, new_y)             # scf.yield at end of body
-final_x, final_y = cf.results           # results accessible after the block
-
-with if_ctx(cond):             # scf.if, no results, auto-inserts scf.yield
-    ...
-
-br = if_op_returning(cond, [vreg, vreg])  # scf.if with results + else
-with InsertionPoint(br.then_block):
-    yield_vals(a, b)
-with InsertionPoint(br.else_block):
-    yield_vals(c, d)
-x, y = br.results
-```
-
-### Tile-domain helpers
-
-```python
-tv  = tile_view(tv_type, ptr, shape, strides)      # pto.make_tensor_view
-ptv = part_view(ptv_type, tv, offsets, sizes)       # pto.partition_view
-t   = alloc_tile(tile_type, addr=a, valid_row=r, valid_col=c)  # pto.alloc_tile
-tload(part, tile)                                   # pto.tload
-tstore(tile, part)                                  # pto.tstore
-ub  = tile_ptr(tile, ptr_ub_type)                   # pto.tile_buf_addr
-```
-
-### Vector / pointer helpers
-
-```python
-ptr  = castptr(int_addr, ptr_type)                  # pto.castptr
-ptr2 = addptr(ptr, offset)                          # pto.addptr
-v    = vlds(ptr, offset, vreg_type)                 # pto.vlds
-v    = vbrc_load(ptr, offset, vreg_type)            # pto.vlds {dist="BRC_B32"}
-vsts(v, ptr, offset, mask)                          # pto.vsts
-vsts_1pt(v, ptr, offset, mask)                      # pto.vsts {dist="1PT_B32"}
-mask, _ = plt_b32(scalar)                           # pto.plt_b32
-mask     = pset_b32("PAT_ALL")                      # pto.pset_b32
-```
-
-### Vector math (result type inferred from first operand)
-
-```python
-vcmax(v, mask)              # cross-lane max reduction
-vdup_lowest(v, mask)        # broadcast lane 0 to all lanes
-vmax(a, b, mask)            # element-wise max
-vexpdif(x, ref, mask)       # exp(x − ref), ODD lanes
-vmul(a, b, mask)            # element-wise multiply
-vcadd(v, mask)              # cross-lane add (sum reduction)
-vadd(a, b, mask)            # element-wise add  (result_type optional)
-vdiv(a, b, mask)            # element-wise divide
-```
-
-### Hardware / sync
-
-```python
-get_block_idx()             # pto.get_block_idx → i64
-barrier_all()               # pto.barrier #pto.pipe<PIPE_ALL>
-# use pto.set_flag / pto.wait_flag directly (from mlir.dialects.pto)
-# use yield_vals(*vals) as shorthand for scf.YieldOp(list(vals))
-```
+Constant declaration order is preserved after the round-trip; builders must
+emit constants in the same order as the reference.  The diff output makes any
+mismatch immediately visible.

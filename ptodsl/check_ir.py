@@ -7,45 +7,48 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 """
-IR correctness check for all ptodsl builder scripts.
+IR correctness check for all ptodsl example scripts.
 
 Run from the repository root or from this directory:
     python3 ptodsl/check_ir.py              # from ptoas_a5/
-    python3 check_ir.py                     # from ptodsl/
+    python3 check_ir.py                     # from ptoas_a5/ptodsl/
 
-Each builder's build() function is called; its output is compared against the
-corresponding hand-written reference .pto file.
+Each example's ``build()`` function is called; its output is compared against
+the corresponding hand-written reference ``.pto`` file.
 
 Comparison methodology
 ──────────────────────
 Both the generated module and the reference file are parsed by the MLIR Python
-API (Module.parse), then printed back to a string.  This round-trip:
+API (``Module.parse``), then printed back to a string.  This round-trip:
 
-  • Strips comments  (// lines in .pto files are ignored by the MLIR parser)
-  • Normalises SSA value names  (%block_idx → %0, %running_max → %arg11, …)
-  • Normalises attribute ordering  (MLIR sorts dict-like attribute sets)
+  • Strips ``//`` comments present in hand-written ``.pto`` files
+  • Normalises SSA value names  (``%block_idx`` → ``%0``, …)
+  • Normalises attribute ordering
 
-The resulting canonical strings are compared with ==.  A diff of the first 60
-differing lines is printed on failure to aid diagnosis.
+The resulting canonical strings are compared with ``==``.  A unified diff of
+the first 60 diverging lines is printed on failure.
 """
 
 import difflib
+import importlib
 import os
 import sys
 
-# Allow running from either ptoas_a5/ or ptoas_a5/ptodsl/
-_HERE = os.path.dirname(os.path.abspath(__file__))
-if _HERE not in sys.path:
-    sys.path.insert(0, _HERE)
+# ── Path setup ────────────────────────────────────────────────────────────────
 
-# ── MLIR bootstrap ───────────────────────────────────────────────────────────
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_EXAMPLES = os.path.join(_HERE, "examples")
 _MLIR_INSTALL = os.path.join(_HERE, "..", "install", "mlir")
-if _MLIR_INSTALL not in sys.path:
-    sys.path.insert(0, _MLIR_INSTALL)
+
+for _p in (_MLIR_INSTALL, _HERE, _EXAMPLES):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from mlir.ir import Context, Module          # noqa: E402
 from mlir.dialects import pto as _pto_mod    # noqa: E402
 
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _normalize(mlir_text: str) -> str:
     """Parse *mlir_text* with MLIR and return the canonical printed form."""
@@ -55,56 +58,44 @@ def _normalize(mlir_text: str) -> str:
 
 
 def _strip_comments(text: str) -> str:
-    """Remove // comment lines that appear in hand-written .pto files."""
+    """Remove ``//`` comment lines found in hand-written ``.pto`` files."""
     return "\n".join(
         line for line in text.splitlines() if not line.strip().startswith("//")
     )
 
 
 # ── Test cases ────────────────────────────────────────────────────────────────
-# Each entry: (label, builder_module_path, reference_pto_path)
+# Each entry: (label, module_name, reference_pto_path)
+
 _REPO_ROOT = os.path.abspath(os.path.join(_HERE, ".."))
+_TADD_REF   = os.path.join(_REPO_ROOT, "test/lit/vpto/expand_tileop_to_vpto_result.pto")
+_SOFTMAX_REF = os.path.join(_REPO_ROOT,
+                             "test/tilelang_st/npu/a5/src/st/testcase/softmax/softmax.pto")
 
 CASES = [
-    (
-        "TADD  low-level ",
-        "tile_and_vpto_builder_lowlevel",
-        os.path.join(_REPO_ROOT,
-                     "test/lit/vpto/expand_tileop_to_vpto_result.pto"),
-    ),
-    (
-        "TADD  high-level",
-        "tile_and_vpto_builder_highlevel",
-        os.path.join(_REPO_ROOT,
-                     "test/lit/vpto/expand_tileop_to_vpto_result.pto"),
-    ),
-    (
-        "softmax low-level ",
-        "softmax_builder_lowlevel",
-        os.path.join(_REPO_ROOT,
-                     "test/tilelang_st/npu/a5/src/st/testcase/softmax/softmax.pto"),
-    ),
-    (
-        "softmax high-level",
-        "softmax_builder_highlevel",
-        os.path.join(_REPO_ROOT,
-                     "test/tilelang_st/npu/a5/src/st/testcase/softmax/softmax.pto"),
-    ),
+    ("TADD  low-level ", "tadd_lowlevel",   _TADD_REF),
+    ("TADD  dsl-style ", "tadd_dsl",        _TADD_REF),
+    ("softmax low-level", "softmax_lowlevel", _SOFTMAX_REF),
+    ("softmax dsl-style", "softmax_dsl",     _SOFTMAX_REF),
 ]
 
 
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 def run_checks(cases=CASES) -> bool:
-    """Execute every check case; return True if all passed."""
+    """Execute every check case; return ``True`` if all passed."""
     all_passed = True
 
     for label, module_name, ref_path in cases:
-        # -- import the builder and call build() --
+        # -- import the example and call build() --
         try:
-            builder = __import__(module_name)
-            generated_module = builder.build()
-            generated_text = str(generated_module)
+            # Re-import on every run so state doesn't leak between cases
+            spec = importlib.util.spec_from_file_location(
+                module_name, os.path.join(_EXAMPLES, f"{module_name}.py")
+            )
+            builder = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(builder)
+            generated_text = str(builder.build())
         except Exception as exc:
             print(f"  FAIL  {label}  [builder error: {exc}]")
             all_passed = False
@@ -146,7 +137,7 @@ def run_checks(cases=CASES) -> bool:
             snippet = "\n".join(diff_lines[:60])
             print(f"  FAIL  {label}\n{snippet}")
             if len(diff_lines) > 60:
-                print(f"        ... ({len(diff_lines) - 60} more diff lines)")
+                print(f"        … ({len(diff_lines) - 60} more diff lines)")
 
     return all_passed
 
