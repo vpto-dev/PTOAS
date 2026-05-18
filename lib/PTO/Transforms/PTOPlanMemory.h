@@ -86,7 +86,7 @@ struct BufferInfo {
   /// memory. Because here do not union the lifetime of A and C, just set the
   /// ignoreInplace of A and C to be true so that A will not be inplaced with
   /// other buffer due to wrong lifetime.
-  /// TODO: Modify the lifetime of A and C and allow them to be inplaced further
+  /// Extending the lifetime union of A and C would allow further inplace reuse.
   bool ignoreInplace{false};
 };
 
@@ -781,7 +781,6 @@ private:
   int scalingSpaceSize{0};
 
 };
-
 } // namespace pto
 } // namespace mlir
 
