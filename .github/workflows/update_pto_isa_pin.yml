@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   update-pto-isa-pin:
-    if: github.repository == 'zhangstevenunity/PTOAS'
+    if: github.repository == 'hw-native-sys/PTOAS'
     runs-on: ubuntu-22.04
     env:
       AUTOMATION_TOKEN: ${{ secrets.WORKFLOW_BOT_TOKEN || secrets.RELEASE_BOT_TOKEN || '' }}
