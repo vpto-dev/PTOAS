@@ -5735,7 +5735,10 @@ struct PTOHistogramToEmitC : public OpConversionPattern<pto::THistogramOp> {
     Value dst = peelUnrealized(adaptor.getDst());
 
     StringRef histByte = "HistByte::BYTE_1";
-    switch (op.getByte()) {
+    int64_t byte = 1;
+    if (auto byteAttr = op.getByteAttr())
+      byte = byteAttr.getInt();
+    switch (byte) {
     case 0:
       histByte = "HistByte::BYTE_0";
       break;

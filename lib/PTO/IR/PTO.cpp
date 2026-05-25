@@ -6662,7 +6662,9 @@ LogicalResult THistogramOp::verify() {
     auto it = dyn_cast<IntegerType>(ty);
     return it && it.getWidth() == width;
   };
-  auto byte = getByte();
+  int64_t byte = 1;
+  if (auto byteAttr = getByteAttr())
+    byte = byteAttr.getInt();
   if (byte < 0 || byte > 3)
     return emitOpError("expects byte to be in range [0, 3]");
 
