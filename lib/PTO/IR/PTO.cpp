@@ -1733,6 +1733,13 @@ static LogicalResult verifyRowReductionValidRegion(Operation *op, Type srcTy,
   auto dstValid = getValidShapeVec(dstTy);
   if (srcValid.size() != 2 || dstValid.size() != 2)
     return op->emitOpError("expects src and dst to have rank-2 valid_shape");
+  // A fully-empty dst valid region (0x0) is PyPTO's dual-AIV no-op replay
+  // marker: the op writes no elements, so accept it and skip the non-empty
+  // structural constraints. One-sided empties (only one dim 0) still fall
+  // through and are rejected below. Hardware Rv=0 no-op is tracked in
+  // pto-isa#143; PTOAS only guarantees the IR is legal here.
+  if (dstValid[0] == 0 && dstValid[1] == 0)
+    return success();
   if (srcValid[0] != ShapedType::kDynamic && srcValid[0] == 0)
     return op->emitOpError("expects src valid_shape[0] to be non-zero");
   if (srcValid[1] != ShapedType::kDynamic && srcValid[1] == 0)
@@ -1826,6 +1833,11 @@ static LogicalResult verifyColReductionValidRegion(Operation *op, Type srcTy,
   auto dstValid = getValidShapeVec(dstTy);
   if (srcValid.size() != 2 || dstValid.size() != 2)
     return op->emitOpError("expects src and dst to have rank-2 valid_shape");
+  // Fully-empty dst valid region (0x0): dual-AIV no-op replay marker. The op
+  // writes no elements; accept and skip the non-empty constraints. One-sided
+  // empties still fall through. See pto-isa#143 for hardware Rv=0 no-op.
+  if (dstValid[0] == 0 && dstValid[1] == 0)
+    return success();
   if (requireNonZeroSrc) {
     if (srcValid[0] != ShapedType::kDynamic && srcValid[0] == 0)
       return op->emitOpError("expects src valid_shape[0] to be non-zero");
@@ -8486,6 +8498,11 @@ mlir::LogicalResult mlir::pto::TRowExpandOp::verify() {
     auto dstValid = getValidShapeVec(getDst());
     if (srcValid.size() != 2 || dstValid.size() != 2)
       return emitOpError("expects src and dst to have rank-2 valid_shape");
+    // Fully-empty dst valid region (0x0): dual-AIV no-op replay marker. The op
+    // writes no elements; accept and skip the non-empty constraints. One-sided
+    // empties still fall through. See pto-isa#143 for hardware Rv=0 no-op.
+    if (dstValid[0] == 0 && dstValid[1] == 0)
+      return success();
     if (srcValid[0] != ShapedType::kDynamic && dstValid[0] != ShapedType::kDynamic &&
         srcValid[0] != dstValid[0])
       return emitOpError("expects src and dst to have the same valid_shape[0]");
@@ -8948,6 +8965,13 @@ static LogicalResult verifyTRowExpandReduceLikeOp(Operation *op, Type src0Ty,
   auto dstValid = getValidShapeVec(dstTy);
   if (src0Valid.size() != 2 || src1Valid.size() != 2 || dstValid.size() != 2)
     return op->emitOpError("expects src0, src1, and dst to have rank-2 valid_shape");
+
+  // Fully-empty dst valid region (0x0): dual-AIV no-op replay marker. Element
+  // type/layout were already checked above; the op writes no elements, so accept
+  // and skip the non-empty broadcast/width constraints. One-sided empties still
+  // fall through. See pto-isa#143 for hardware Rv=0 no-op.
+  if (dstValid[0] == 0 && dstValid[1] == 0)
+    return success();
 
   if (dstValid[0] != ShapedType::kDynamic && dstValid[0] == 0)
     return op->emitOpError("expects dst valid_shape[0] to be non-zero");
@@ -10425,6 +10449,41 @@ void mlir::pto::SubViewOp::print(OpAsmPrinter &printer) {
   printer << " : " << getSource().getType() << " -> " << getResult().getType();
 }
 
+// The inferred result type derives valid_shape from `sizes` (or the explicit
+// valid operands). PyPTO's dual-AIV no-op replay instead declares a result type
+// with an empty valid region (v_row/v_col = 0) and no valid operand. Accept that
+// declared empty marker here; SubViewOp::verify() enforces that 0 is only legal
+// where the corresponding valid operand is absent. Every other difference
+// (shape, element type, address space, config, or a non-zero valid mismatch) is
+// still rejected exactly as the default exact-equality check would.
+bool SubViewOp::isCompatibleReturnTypes(TypeRange lhs, TypeRange rhs) {
+  if (lhs.size() != rhs.size())
+    return false;
+  for (auto [inferred, declared] : llvm::zip(lhs, rhs)) {
+    if (inferred == declared)
+      continue;
+    auto inferredTb = dyn_cast<TileBufType>(inferred);
+    auto declaredTb = dyn_cast<TileBufType>(declared);
+    if (!inferredTb || !declaredTb)
+      return false;
+    if (inferredTb.getShape() != declaredTb.getShape() ||
+        inferredTb.getElementType() != declaredTb.getElementType() ||
+        inferredTb.getMemorySpace() != declaredTb.getMemorySpace() ||
+        inferredTb.getConfigAttr() != declaredTb.getConfigAttr())
+      return false;
+    auto inferredValid = inferredTb.getValidShape();
+    auto declaredValid = declaredTb.getValidShape();
+    if (inferredValid.size() != declaredValid.size())
+      return false;
+    for (auto [inferredDim, declaredDim] : llvm::zip(inferredValid, declaredValid)) {
+      // A declared 0 is the empty-region marker; otherwise the dims must match.
+      if (inferredDim != declaredDim && declaredDim != 0)
+        return false;
+    }
+  }
+  return true;
+}
+
 LogicalResult SubViewOp::inferReturnTypes(
     MLIRContext *context, std::optional<Location> location, ValueRange operands,
     DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
@@ -10704,9 +10763,17 @@ mlir::LogicalResult mlir::pto::SubViewOp::verify() {
   auto dstValid = dstTy.getValidShape();
   if (dstValid.size() != 2)
     return emitOpError("expects result to have rank-2 valid_shape");
-  if (dstValid[0] != expectedVRow)
+  // An omitted valid operand normally infers valid_shape == sizes. Also accept a
+  // result type that declares an empty valid region (v_row/v_col == 0) on that
+  // path: this is the "no useful output" marker PyPTO's dual-AIV no-op replay
+  // stamps on the inactive lane. Lowering derives the bind_tile valid operand
+  // from this type, so the empty marker reaches codegen instead of being
+  // widened back to sizes.
+  bool rowInferredEmpty = !getValidRow() && dstValid[0] == 0;
+  bool colInferredEmpty = !getValidCol() && dstValid[1] == 0;
+  if (dstValid[0] != expectedVRow && !rowInferredEmpty)
     return emitOpError("expects result valid_shape[0] to match inferred/explicit valid_row");
-  if (dstValid[1] != expectedVCol)
+  if (dstValid[1] != expectedVCol && !colInferredEmpty)
     return emitOpError("expects result valid_shape[1] to match inferred/explicit valid_col");
 
   auto cfg = srcTy.getConfigAttr();

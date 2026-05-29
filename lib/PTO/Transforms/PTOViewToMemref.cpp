@@ -527,11 +527,19 @@ static bool foldAddPtrChainIntoOffset(IRRewriter &rewriter, Location loc,
 
 static Value clampSubViewValidDim(IRRewriter &rewriter, Location loc,
                                   Value explicitValid, int64_t size,
-                                  Operation *anchorOp) {
-  Value sizeVal = rewriter.create<arith::ConstantIndexOp>(loc, size);
-  if (!explicitValid)
-    return sizeVal;
+                                  int64_t inferredValid, Operation *anchorOp) {
+  if (!explicitValid) {
+    // No explicit valid operand: take the valid extent the result type
+    // declares. For an ordinary subview this equals `size`; for an empty
+    // tail/no-op-replay tile the type carries 0, which must survive to
+    // bind_tile rather than being widened back to `size`. A dynamic declared
+    // extent is materialized via markForceDynamicValidShape, so fall back to
+    // `size` here.
+    int64_t fallback = inferredValid >= 0 ? inferredValid : size;
+    return rewriter.create<arith::ConstantIndexOp>(loc, fallback);
+  }
 
+  Value sizeVal = rewriter.create<arith::ConstantIndexOp>(loc, size);
   int64_t cst = 0;
   if (getConstIndexValue(explicitValid, cst))
     return rewriter.create<arith::ConstantIndexOp>(loc, std::min(cst, size));
@@ -1228,14 +1236,24 @@ static LogicalResult lowerSubViewOps(func::FuncOp func, MLIRContext *ctx) {
                                                  mixedOffsets, mixedSizes,
                                                  mixedStrides);
 
+    // When a valid operand is omitted, fall back to the extent the result type
+    // declares (which the verifier pins to either `sizes` or an empty 0 marker)
+    // rather than the physical subview size, so a no-op-replay v_row/v_col=0
+    // survives lowering.
+    ArrayRef<int64_t> resultValid =
+        resultTileTy ? resultTileTy.getValidShape() : ArrayRef<int64_t>{};
+    auto inferredValidDim = [&](unsigned d) -> int64_t {
+      return d < resultValid.size() ? resultValid[d] : ShapedType::kDynamic;
+    };
+
     Value vRow;
     Value vCol;
     if (!staticSizes.empty())
       vRow = clampSubViewValidDim(rewriter, loc, op.getValidRow(),
-                                  staticSizes[0], op);
+                                  staticSizes[0], inferredValidDim(0), op);
     if (staticSizes.size() > 1)
       vCol = clampSubViewValidDim(rewriter, loc, op.getValidCol(),
-                                  staticSizes[1], op);
+                                  staticSizes[1], inferredValidDim(1), op);
 
     auto bindOp = rewriter.create<pto::BindTileOp>(
         loc, resultMemRefType, sv.getResult(), vRow ? vRow : Value(),

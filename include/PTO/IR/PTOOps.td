@@ -383,10 +383,16 @@ def SubViewOp : PTO_Op<"subview", [
   let extraClassDeclaration = [{
     // 接口要求 getViewSource，我们转发给自动生成的 getSource
     ::mlir::Value getViewSource() { return getSource(); }
-    
+
     // ViewLikeOpInterface 可能还需要 getOffsets (如果 Variadic 不自动匹配)
     // 但通常 Variadic<Index>:$offsets 会生成 getOffsets()，这应该没问题。
     // 如果后续报 getOffsets 错，也可以在这里加。
+
+    // Override the InferTypeOpInterface compatibility check so a declared empty
+    // valid region (valid_row/valid_col = 0) is accepted in place of the size-
+    // inferred valid extent on the operand-omitted path (PyPTO dual-AIV no-op
+    // replay). inferReturnTypes' default impl dispatches to this static method.
+    static bool isCompatibleReturnTypes(::mlir::TypeRange l, ::mlir::TypeRange r);
   }];
 }
 
