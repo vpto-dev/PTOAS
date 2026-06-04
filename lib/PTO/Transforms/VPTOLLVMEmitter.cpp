@@ -7534,8 +7534,8 @@ static bool isValidSimtKeepResumeSlot(int64_t slot, unsigned registerCount) {
 class LowerKeepOpPattern final : public OpConversionPattern<pto::KeepOp> {
 public:
   explicit LowerKeepOpPattern(TypeConverter &typeConverter, MLIRContext *context,
-                              LoweringState &state)
-      : OpConversionPattern<pto::KeepOp>(typeConverter, context), state(state) {}
+                              LoweringState &)
+      : OpConversionPattern<pto::KeepOp>(typeConverter, context) {}
 
   LogicalResult
   matchAndRewrite(pto::KeepOp op, pto::KeepOp::Adaptor adaptor,
@@ -7600,15 +7600,13 @@ public:
     return success();
   }
 
-private:
-  LoweringState &state;
 };
 
 class LowerResumeOpPattern final : public OpConversionPattern<pto::ResumeOp> {
 public:
   explicit LowerResumeOpPattern(TypeConverter &typeConverter,
-                                MLIRContext *context, LoweringState &state)
-      : OpConversionPattern<pto::ResumeOp>(typeConverter, context), state(state) {}
+                                MLIRContext *context, LoweringState &)
+      : OpConversionPattern<pto::ResumeOp>(typeConverter, context) {}
 
   LogicalResult
   matchAndRewrite(pto::ResumeOp op, pto::ResumeOp::Adaptor adaptor,
@@ -7701,8 +7699,6 @@ public:
     return success();
   }
 
-private:
-  LoweringState &state;
 };
 
 template <typename ConfigOp>
@@ -8812,9 +8808,8 @@ public:
 class ConvertPtoLoadOp final : public OpConversionPattern<pto::PTOLoadOp> {
 public:
   ConvertPtoLoadOp(TypeConverter &typeConverter, MLIRContext *context,
-                   LoweringState &state)
-      : OpConversionPattern<pto::PTOLoadOp>(typeConverter, context),
-        state(state) {}
+                   LoweringState &)
+      : OpConversionPattern<pto::PTOLoadOp>(typeConverter, context) {}
 
   LogicalResult
   matchAndRewrite(pto::PTOLoadOp op, OpAdaptor adaptor,
@@ -8846,8 +8841,6 @@ public:
     return success();
   }
 
-private:
-  LoweringState &state;
 };
 
 static Type getLdgCallResultType(Type valueType, Type convertedValueType,
@@ -8966,9 +8959,8 @@ private:
 class ConvertPtoStoreOp final : public OpConversionPattern<pto::PTOStoreOp> {
 public:
   ConvertPtoStoreOp(TypeConverter &typeConverter, MLIRContext *context,
-                    LoweringState &state)
-      : OpConversionPattern<pto::PTOStoreOp>(typeConverter, context),
-        state(state) {}
+                    LoweringState &)
+      : OpConversionPattern<pto::PTOStoreOp>(typeConverter, context) {}
 
   LogicalResult
   matchAndRewrite(pto::PTOStoreOp op, OpAdaptor adaptor,
@@ -8995,8 +8987,6 @@ public:
     return success();
   }
 
-private:
-  LoweringState &state;
 };
 
 static Value convertStgValue(Location loc, Type valueType, Value value,
