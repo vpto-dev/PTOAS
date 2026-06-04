@@ -63,6 +63,28 @@ expect_raises(
 )
 
 
+class _FakeTileWithoutValidShape:
+    shape = (1, 16)
+    valid_shape = None
+
+
+class _FakeTileWithPartialValidShape:
+    shape = (1, 16)
+    valid_shape = [1, None]
+
+
+expect_raises(
+    TypeError,
+    lambda: pto.tile.load(object(), _FakeTileWithoutValidShape(), offsets=[0, 0]),
+    "requires tile valid_shape metadata",
+)
+expect_raises(
+    ValueError,
+    lambda: pto.tile.load(object(), _FakeTileWithPartialValidShape(), offsets=[0, 0]),
+    "tile.valid_shape[1] is None",
+)
+
+
 @pto.jit(target="a5")
 def host_vec_copy(
     A_ptr: pto.ptr(pto.f32, "gm"),
@@ -114,6 +136,23 @@ def pointer_runtime_shape_specialization_probe(
     x_part = pto.partition_view(x_view, offsets=[0, 0], sizes=[rows, cols])
     x_tile = pto.alloc_tile(shape=[1, BLOCK], dtype=pto.f32, valid_shape=[1, cols])
     pto.tile.load(x_part, x_tile)
+
+
+@pto.jit(target="a5")
+def tile_transfer_surface_probe(
+    A_ptr: pto.ptr(pto.f32, "gm"),
+    O_ptr: pto.ptr(pto.f32, "gm"),
+    rows: pto.i32,
+    cols: pto.i32,
+    *,
+    BLOCK: pto.constexpr = 128,
+):
+    a_view = pto.make_tensor_view(A_ptr, shape=[rows, cols], strides=[cols, 1])
+    o_view = pto.make_tensor_view(O_ptr, shape=[rows, cols], strides=[cols, 1])
+    a_tile = pto.alloc_tile(shape=[1, BLOCK], dtype=pto.f32, valid_shape=[rows, cols])
+    o_tile = pto.alloc_tile(shape=[1, BLOCK], dtype=pto.f32, valid_shape=[rows, cols])
+    pto.tile.load(a_view, a_tile)
+    pto.tile.store(o_tile, o_view)
 
 
 @pto.jit(target="a5", insert_sync=False)
@@ -1218,6 +1257,8 @@ def main() -> None:
     expect(hasattr(pto.tile, "load"), "pto.tile.load should be exported from the public tile namespace")
     expect(hasattr(pto.tile, "add"), "pto.tile.add should be exported from the public tile namespace")
     expect(hasattr(pto.tile, "cmps"), "pto.tile.cmps should be exported from the public tile namespace")
+    expect(not hasattr(pto, "load_tile"), "pto.load_tile should not remain on the public pto namespace")
+    expect(not hasattr(pto, "store_tile"), "pto.store_tile should not remain on the public pto namespace")
     expect(not hasattr(pto, "tload"), "legacy pto.tload should not remain on the public pto namespace")
     expect(not hasattr(pto, "tstore"), "legacy pto.tstore should not remain on the public pto namespace")
     expect(not hasattr(pto, "tadd"), "legacy pto.tadd should not remain on the public pto namespace")
@@ -1608,6 +1649,18 @@ def main() -> None:
             runtime_metadata_text,
         ) is not None,
         "partition_view sizes derived from tensor metadata should remain runtime MLIR values",
+    )
+
+    tile_transfer_text = tile_transfer_surface_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(tile_transfer_text, "tile transfer surface specialization")
+    expect("pto.tload" in tile_transfer_text, "pto.tile.load(tensor, tile) should lower to pto.tload")
+    expect("pto.tstore" in tile_transfer_text, "pto.tile.store(tile, tensor) should lower to pto.tstore")
+    expect(
+        re.search(
+            r"sizes = \[%[a-zA-Z0-9_]+, %[a-zA-Z0-9_]+\]",
+            tile_transfer_text,
+        ) is not None,
+        "pto.tile.load/store overloads should infer partition sizes from tile.valid_shape",
     )
 
     authored_addr_tile_text = authored_addr_tile_surface_probe.compile().mlir_text()

@@ -1632,6 +1632,102 @@ def partition_view(tv, *, offsets, sizes):
     )
 
 
+def _tile_logical_rank(tile, *, context: str) -> int:
+    shape = getattr(tile, "shape", None)
+    if shape is not None:
+        return len(shape)
+    parsed = parse_tile_type_metadata(unwrap_surface_value(tile).type)
+    if parsed is not None:
+        return len(parsed["shape_dims"])
+    raise TypeError(f"{context} requires tile shape metadata to infer sizes")
+
+
+def _source_view_rank(tv, *, context: str) -> int:
+    shape = getattr(tv, "shape", None)
+    if shape is not None:
+        return len(shape)
+    raw_type = unwrap_surface_value(tv).type
+    try:
+        return _pto.TensorViewType(raw_type).rank
+    except Exception:
+        try:
+            return _pto.PartitionTensorViewType(raw_type).rank
+        except Exception as exc:
+            raise TypeError(f"{context} expects a tensor view or partition tensor view, got {raw_type}") from exc
+
+
+def _is_partition_tensor_view(value) -> bool:
+    try:
+        _pto.PartitionTensorViewType(unwrap_surface_value(value).type)
+        return True
+    except Exception:
+        return False
+
+
+def _normalize_transfer_offsets(tv, *, offsets, context: str):
+    if offsets is None:
+        return [0] * _source_view_rank(tv, context=context)
+    if isinstance(offsets, tuple):
+        return list(offsets)
+    if isinstance(offsets, list):
+        return offsets
+    return [offsets]
+
+
+def _normalize_transfer_sizes(sizes):
+    if isinstance(sizes, tuple):
+        return list(sizes)
+    if isinstance(sizes, list):
+        return sizes
+    return [sizes]
+
+
+def _infer_tile_transfer_sizes(tile, *, context: str):
+    valid_shape = getattr(tile, "valid_shape", None)
+    if valid_shape is None:
+        raise TypeError(f"{context} requires tile valid_shape metadata to infer sizes")
+    sizes = []
+    for index in range(_tile_logical_rank(tile, context=context)):
+        try:
+            dim = valid_shape[index]
+        except Exception as exc:
+            raise TypeError(
+                f"{context} could not read tile.valid_shape[{index}] to infer sizes; "
+                "pass sizes= explicitly"
+            ) from exc
+        if dim is None:
+            raise ValueError(
+                f"{context} cannot infer partition sizes because tile.valid_shape[{index}] is None; "
+                "pass sizes= explicitly"
+            )
+        sizes.append(dim)
+    return sizes
+
+
+def _tile_transfer_partition(tv, tile, *, offsets=None, sizes=None, context: str):
+    normalized_offsets = _normalize_transfer_offsets(
+        tv,
+        offsets=offsets,
+        context=context,
+    )
+    normalized_sizes = (
+        _infer_tile_transfer_sizes(tile, context=context)
+        if sizes is None
+        else _normalize_transfer_sizes(sizes)
+    )
+    if len(normalized_offsets) != len(normalized_sizes):
+        if sizes is None:
+            raise ValueError(
+                f"{context} cannot infer partition sizes for rank-{len(normalized_offsets)} view "
+                f"from rank-{len(normalized_sizes)} tile; pass sizes= explicitly"
+            )
+        raise ValueError(
+            f"{context} expects offset rank and sizes rank to match, got "
+            f"{len(normalized_offsets)} and {len(normalized_sizes)}"
+        )
+    return partition_view(tv, offsets=normalized_offsets, sizes=normalized_sizes)
+
+
 def alloc_tile(
     tile_type=None,
     *,

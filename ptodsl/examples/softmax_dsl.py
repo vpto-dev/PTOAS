@@ -68,17 +68,6 @@ def _make_softmax_kernel(name: str, *, rows: int, seq: int):
                     shape=[seq, rows],
                     strides=[1, seq],
                 )
-                scores_part = pto.partition_view(
-                    scores_view,
-                    offsets=[0, 0],
-                    sizes=[runtime_seq, runtime_rows],
-                )
-                out_part = pto.partition_view(
-                    out_view,
-                    offsets=[0, 0],
-                    sizes=[runtime_seq, runtime_rows],
-                )
-
                 scores_tile = pto.alloc_tile(
                     shape=[seq, physical_rows],
                     dtype=pto.float32,
@@ -92,7 +81,7 @@ def _make_softmax_kernel(name: str, *, rows: int, seq: int):
                     valid_shape=[runtime_seq, runtime_rows],
                 )
 
-                pto.tile.load(scores_part, scores_tile)
+                pto.tile.load(scores_view, scores_tile)
 
                 pto.set_flag("MTE2", "V", event_id=0)
                 pto.wait_flag("MTE2", "V", event_id=0)
@@ -139,7 +128,7 @@ def _make_softmax_kernel(name: str, *, rows: int, seq: int):
                 pto.set_flag("V", "MTE3", event_id=0)
                 pto.wait_flag("V", "MTE3", event_id=0)
 
-                pto.tile.store(out_tile, out_part)
+                pto.tile.store(out_tile, out_view)
                 pto.pipe_barrier(pto.Pipe.ALL)
 
     return kernel

@@ -16,9 +16,33 @@ def _resolve_row_reduction_tmp(src, tmp):
 
 
 class _TileNamespace:
-    load = staticmethod(_ops.tload)
-    store = staticmethod(_ops.tstore)
     mov = staticmethod(_ops.tmov)
+
+    @staticmethod
+    def load(src, tile, *, offsets=None, sizes=None):
+        if offsets is None and sizes is None and _ops._is_partition_tensor_view(src):
+            return _ops.tload(src, tile)
+        part = _ops._tile_transfer_partition(
+            src,
+            tile,
+            offsets=offsets,
+            sizes=sizes,
+            context="tile.load(...)",
+        )
+        return _ops.tload(part, tile)
+
+    @staticmethod
+    def store(tile, dst, *, offsets=None, sizes=None):
+        if offsets is None and sizes is None and _ops._is_partition_tensor_view(dst):
+            return _ops.tstore(tile, dst)
+        part = _ops._tile_transfer_partition(
+            dst,
+            tile,
+            offsets=offsets,
+            sizes=sizes,
+            context="tile.store(...)",
+        )
+        return _ops.tstore(tile, part)
 
     add = staticmethod(_ops.tadd)
     sub = staticmethod(_ops.tsub)
