@@ -19,6 +19,28 @@ permissions:
   contents: read
 
 jobs:
+  pr-context:
+    if: ${{ github.event_name == 'pull_request' && github.run_attempt == 1 }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Write PR context
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p pr-context
+          printf '%s\n' "${PR_NUMBER}" > pr-context/pr-number
+          printf '%s\n' "${PR_HEAD_SHA}" > pr-context/pr-head-sha
+
+      - name: Upload PR context
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-context
+          path: pr-context
+          if-no-files-found: error
+
   vpto-sim-validation:
     runs-on: [self-hosted, Linux, X64, label-1]
     timeout-minutes: 120
